@@ -572,6 +572,13 @@
             return;
         }
         var path = f.Path.Where(graph.Nodes.ContainsKey).ToList();
+        // 고른 진입점에서도 닿는 지적이면 그 진입점에서 시작하는 경로로(대표 경로는 가장 가까운 진입점 기준이다)
+        if (selectedEntry is not null && index is not null && f.Entries.Contains(selectedEntry.NodeId) && path.FirstOrDefault() != selectedEntry.NodeId &&
+            Checks.PathFrom(graph, index, selectedEntry.NodeId, f.NodeId) is { Count: > 0 } head)
+        {
+            var at = path.IndexOf(f.NodeId);
+            path = [.. head, .. at >= 0 ? path.Skip(at + 1) : []];
+        }
         if (path.Count == 0)
         {
             OpenInEditor(f.Site.File, f.Site.Line);

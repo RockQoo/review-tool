@@ -392,7 +392,7 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
         if (entry is not null)
         {
             var n = ResolveEntry(t.G, entry);
-            report = report with { Findings = report.Findings.Where(f => f.Path.Contains(n.Id)).ToList() };
+            report = report with { Findings = report.Findings.Where(f => f.Entries.Contains(n.Id)).ToList() };
             title += " · " + EntryTitle(t.G, n);
         }
         return Checks.ToText(t.G, report, title);

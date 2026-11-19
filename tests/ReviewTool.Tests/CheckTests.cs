@@ -30,9 +30,30 @@ public class CheckTests
             Graph.Edges.Add(new TraceEdge
             {
                 From = from, To = to, Resolution = resolution,
-                CallSites = [new SourceRef { File = Graph.Nodes[from].File, Line = line }],
+                CallSites = [new SourceRef { File = Graph.Nodes[from].File, Line = line, Column = ColumnOf(from, to, line) }],
             });
             return this;
+        }
+
+        // 한 선에 호출 위치 여러 개(같은 함수를 여러 번 부름). (줄, 열)
+        public G Sites(string from, string to, params (int Line, int Column)[] sites)
+        {
+            Graph.Edges.Add(new TraceEdge
+            {
+                From = from, To = to,
+                CallSites = [.. sites.Select(s => new SourceRef { File = Graph.Nodes[from].File, Line = s.Line, Column = s.Column })],
+            });
+            return this;
+        }
+
+        // 실제 색인처럼 호출 위치 열 =그 줄에서 부르는 함수 이름이 시작하는 곳(0부터). 못 찾으면 첫 글자.
+        private int ColumnOf(string from, string to, int line)
+        {
+            var node = Graph.Nodes[from];
+            var lines = node.Code.Split('\n');
+            var text = line - node.StartLine is var i && i >= 0 && i < lines.Length ? lines[i] : "";
+            var at = text.IndexOf(Graph.Nodes[to].Name.Split("::")[^1] + "(", StringComparison.Ordinal);
+            return at >= 0 ? at : text.Length - text.TrimStart().Length;
         }
 
         public G Entry(string id, string label)
@@ -283,5 +304,69 @@ public class CheckTests
     {
         var clean = CodeText.Clean(["a(\"lock()\"); // b.lock()", "/* x.lock() */ c.lock(); '}'", "/* a", "b */ d"]);
         Assert.Equal(["a(\"      \");" + new string(' ', 12), new string(' ', 14) + " c.lock(); ' '", "    ", "     d"], clean);
+    }
+
+    [Fact]
+    public void 같은_줄에서_잠그기_전과_푼_뒤의_호출은_범위_밖이다()
+    {
+        const string line = "    Send(a); { std::lock_guard l(m); Send(b); } Send(c);";
+        var g = new G()
+            .Node("F", "Net::Hub::Once", "Core/Hub.cpp", 1, "void Once()\n{\n" + line + "\n}")
+            .Node("S", "Net::Session::Send", "Core/Session.cpp", 40, "void Send() {}")
+            .Sites("F", "S", (3, line.IndexOf("Send(a)")), (3, line.IndexOf("Send(b)")), (3, line.IndexOf("Send(c)")));
+
+        var f = Assert.Single(g.Run(Rule(Checks.ForbidInScope)).Findings);
+
+        Assert.Equal([line.IndexOf("Send(b)")], f.Evidence.Select(e => e.Site.Column));
+    }
+
+    [Fact]
+    public void 같은_함수를_두_번_불러도_두_번째_호출이_순서에_남는다()
+    {
+        var g = new G()
+            .Node("A", "Shop::OnBuy", "S/Shop.cpp", 1, "void OnBuy()\n{\n    Grant();\n    Wallet::Spend();\n    Grant();\n}")
+            .Node("S", "Wallet::Spend", "S/Wallet.cpp", 30, "void Spend() {}")
+            .Node("G2", "Shop::Grant", "S/Shop.cpp", 50, "void Grant() {}")
+            .Sites("A", "G2", (3, 4), (5, 4)).Call("A", "S", 4)
+            .Entry("A", "C2SBuy");
+
+        var f = Assert.Single(g.Run(Rule(Checks.Order)).Findings);
+
+        Assert.Equal([4, 5], f.Evidence.Select(e => e.Site.Line));
+        Assert.Equal(["A"], f.Entries);
+    }
+
+    [Fact]
+    public void 블록_주석_안의_include_는_의존이_아니다()
+    {
+        var g = new G().Node("A", "Common::Do", "Server/Common/A.cpp", 1, "void Do() {}");
+        g.Graph.Inputs = [new InputFile { File = "Server/Common/A.cpp" }, new InputFile { File = "Server/Content/Quest.h" }];
+        string[]? Read(string file) => file == "Server/Common/A.cpp"
+            ? ["/*", "#include \"../Content/Quest.h\"", "*/", "#include \"../Content/Quest.h\""]
+            : null;
+
+        var f = Assert.Single(g.Run(Rule(Checks.Dependency), Read).Findings);
+
+        Assert.Equal([4], f.Evidence.Select(e => e.Site.Line));
+    }
+
+    [Fact]
+    public void 여러_진입점이_지나는_함수의_지적은_진입점을_모두_가진다()
+    {
+        var g = new G()
+            .Node("E1", "H::OnA", "a.cpp", 1, "void OnA()\n{\n    Hub::Flush();\n}")
+            .Node("E2", "H::OnB", "a.cpp", 10, "void OnB()\n{\n    Mid();\n}")
+            .Node("M", "H::Mid", "a.cpp", 20, "void Mid()\n{\n    Hub::Flush();\n}")
+            .Node("F", "Hub::Flush", "hub.cpp", 1, "void Flush()\n{\n    std::lock_guard l(m);\n    Session::Send();\n}")
+            .Node("S", "Session::Send", "s.cpp", 1, "void Send() {}")
+            .Call("E1", "F", 3).Call("E2", "M", 12).Call("M", "F", 22).Call("F", "S", 4)
+            .Entry("E1", "C2SA").Entry("E2", "C2SB");
+
+        var report = g.Run(Rule(Checks.ForbidInScope));
+
+        var f = Assert.Single(report.Findings);
+        Assert.Equal(["E1", "E2"], f.Entries.Order());
+        Assert.Equal(["E1", "F", "S"], f.Path);                       // 대표 경로는 가까운 진입점
+        Assert.Equal(["E2", "M", "F"], Checks.PathFrom(g.Graph, new TraceIndex(g.Graph), "E2", "F"));
     }
 }

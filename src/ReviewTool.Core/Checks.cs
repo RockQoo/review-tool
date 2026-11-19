@@ -112,9 +112,13 @@ public static class Checks
 
     public sealed record Evidence(SourceRef Site, string Text, string Note);
 
-    // Path: 진입점 → … → 문제 함수(찾지 못하면 그 함수 하나). 화면은 이것을 코드 스택으로 연다.
+    // Path: 가장 가까운 진입점 → … → 문제 함수(찾지 못하면 그 함수 하나). 화면은 이것을 코드 스택으로 연다.
+    // Entries: 이 지적에 닿는 진입점 함수 id 전부(진입점으로 거를 때 쓴다). 비어 있으면 진입점과 무관(#include 등).
     public sealed record Finding(string Rule, string Kind, Certainty Certainty, string Why, string Title, string Message,
-                                 string NodeId, SourceRef Site, IReadOnlyList<Evidence> Evidence, IReadOnlyList<string> Path);
+                                 string NodeId, SourceRef Site, IReadOnlyList<Evidence> Evidence, IReadOnlyList<string> Path)
+    {
+        public IReadOnlyList<string> Entries { get; init; } = [];
+    }
 
     public sealed record RuleRun(CheckRule Rule, RuleState State, string Note, int Count, bool Cut);
 
@@ -185,7 +189,9 @@ public static class Checks
                     _ => throw new RuleError($"모르는 종류(kind): \"{rule.Kind}\". {ForbidInScope}·{RequireWithin}·{Order}·{Dependency} 중 하나입니다."),
                 };
                 var cut = found.Count > MaxFindingsPerRule;
-                findings.AddRange(found.Take(MaxFindingsPerRule));
+                // 진입점을 따로 정하지 않은 지적은 그 함수까지 닿는 진입점 전부(대표 경로 하나만으로 거르지 않게)
+                findings.AddRange(found.Take(MaxFindingsPerRule).Select(f =>
+                    f.Entries.Count > 0 || f.NodeId.Length == 0 ? f : f with { Entries = context.EntriesReaching(f.NodeId) }));
                 runs.Add(new RuleRun(rule, RuleState.Ran, note, Math.Min(found.Count, MaxFindingsPerRule), cut));
             }
             catch (Exception ex) when (ex is RuleError or ArgumentException or RegexMatchTimeoutException)
@@ -216,7 +222,38 @@ public static class Checks
 
     private static readonly Regex Never = new("(?!)");
 
-    // 규칙마다 다시 만들지 않는 것: 진입점에서의 대표 경로, 정리한 본문 줄
+    // from 에서 to 까지 가장 짧은 호출 경로(함수 주소만 넘긴 선은 따라가지 않는다). 없으면 빈 목록.
+    // 화면에서 고른 진입점으로 지적을 열 때 쓴다.
+    public static IReadOnlyList<string> PathFrom(TraceGraph graph, TraceIndex index, string from, string to)
+    {
+        var parent = new Dictionary<string, string> { [from] = "" };
+        var queue = new Queue<string>();
+        queue.Enqueue(from);
+        while (queue.Count > 0 && !parent.ContainsKey(to))
+        {
+            var id = queue.Dequeue();
+            foreach (var e in index.ChildrenOf(id))
+            {
+                if (!TraceQueries.IsAddressOnly(graph, e) && parent.TryAdd(e.To, id))
+                {
+                    queue.Enqueue(e.To);
+                }
+            }
+        }
+        if (!parent.ContainsKey(to))
+        {
+            return [];
+        }
+        var path = new List<string>();
+        for (var cur = to; cur.Length > 0; cur = parent[cur])
+        {
+            path.Add(cur);
+        }
+        path.Reverse();
+        return path;
+    }
+
+    // 규칙마다 다시 만들지 않는 것: 진입점에서의 대표 경로, 정리한 본문 줄, 선마다의 "주소만 넘김" 판정, 거꾸로 닿는 진입점
     private sealed class Context(TraceGraph graph, TraceIndex index, Func<string, string[]?> readLines)
     {
         public TraceGraph Graph { get; } = graph;
@@ -224,6 +261,48 @@ public static class Checks
         public Func<string, string[]?> ReadLines { get; } = readLines;
         private Dictionary<string, string>? parent_;
         private readonly Dictionary<string, string[]> clean_ = [];
+        private readonly Dictionary<TraceEdge, bool> addressOnly_ = new(ReferenceEqualityComparer.Instance);
+        private Dictionary<string, List<string>>? callers_;
+        private HashSet<string>? entryNodes_;
+        private readonly Dictionary<string, IReadOnlyList<string>> entriesOf_ = [];
+
+        // 이 함수까지 닿는 진입점 함수 id 전부(호출자를 거슬러 올라간다)
+        public IReadOnlyList<string> EntriesReaching(string nodeId)
+        {
+            if (entriesOf_.TryGetValue(nodeId, out var cached))
+            {
+                return cached;
+            }
+            if (callers_ is null)
+            {
+                callers_ = [];
+                foreach (var e in Graph.Edges.Where(e => !AddressOnly(e)))
+                {
+                    (callers_.TryGetValue(e.To, out var list) ? list : callers_[e.To] = []).Add(e.From);
+                }
+                entryNodes_ = Graph.EntryPoints.Select(e => e.NodeId).ToHashSet();
+            }
+            var seen = new HashSet<string> { nodeId };
+            var queue = new Queue<string>();
+            queue.Enqueue(nodeId);
+            var found = new List<string>();
+            while (queue.Count > 0)
+            {
+                var id = queue.Dequeue();
+                if (entryNodes_!.Contains(id))
+                {
+                    found.Add(id);
+                }
+                foreach (var c in callers_.GetValueOrDefault(id) ?? [])
+                {
+                    if (seen.Add(c))
+                    {
+                        queue.Enqueue(c);
+                    }
+                }
+            }
+            return entriesOf_[nodeId] = found;
+        }
 
         // 모든 진입점에서 한꺼번에 너비 우선: 어느 함수든 가장 가까운 진입점에서의 경로 하나
         public List<string> PathTo(string nodeId)
@@ -244,7 +323,7 @@ public static class Checks
                     var id = queue.Dequeue();
                     foreach (var edge in Index.ChildrenOf(id))
                     {
-                        if (!TraceQueries.IsAddressOnly(Graph, edge) && parent_.TryAdd(edge.To, id))
+                        if (!AddressOnly(edge) && parent_.TryAdd(edge.To, id))
                         {
                             queue.Enqueue(edge.To);
                         }
@@ -270,7 +349,15 @@ public static class Checks
             return lines;
         }
 
-        public bool AddressOnly(TraceEdge e) => TraceQueries.IsAddressOnly(Graph, e);
+        public bool AddressOnly(TraceEdge e)
+        {
+            if (!addressOnly_.TryGetValue(e, out var v))
+            {
+                v = TraceQueries.IsAddressOnly(Graph, e);
+                addressOnly_[e] = v;
+            }
+            return v;
+        }
     }
 
     private static string LineText(TraceNode node, int line)
@@ -310,16 +397,22 @@ public static class Checks
                     continue;
                 }
                 scopes++;
-                var (end, reachedEnd) = statement ? StatementEnd(lines, i) : BlockEnd(lines, i, m.Index + m.Length, close);
-                var from = node.StartLine + i + (statement ? 0 : 1);
-                var to = node.StartLine + end;
+                // 범위는 (줄, 열)로 잰다: 같은 줄에서 잠그기 전·푼 뒤의 호출은 빼야 한다. 열은 0부터(LSP 와 같음).
+                var begin = (i, statement ? m.Index : m.Index + m.Length);
+                var (end, reachedEnd) = statement ? StatementEnd(lines, i, m.Index) : BlockEnd(lines, i, m.Index + m.Length, close);
+                bool Inside(int line, int column)
+                {
+                    var at = (line - node.StartLine, column);
+                    return Compare(at, begin) >= 0 && Compare(at, end) < 0;
+                }
+                var to = node.StartLine + end.Line;
                 var evidence = new List<Evidence>();
                 var certainty = Certainty.High;
                 var why = "잠근 범위 안에 정적 호출이 직접 있습니다.";
                 var deepest = new List<string>();
                 foreach (var edge in c.Index.ChildrenOf(node.Id))
                 {
-                    var sites = edge.CallSites.Where(s => s.Line >= from && s.Line <= to).ToList();
+                    var sites = edge.CallSites.Where(s => Inside(s.Line, s.Column)).ToList();
                     if (sites.Count == 0 || c.AddressOnly(edge) || !c.Graph.Nodes.TryGetValue(edge.To, out var callee))
                     {
                         continue;
@@ -353,7 +446,7 @@ public static class Checks
                         }
                     }
                 }
-                foreach (var hit in node.TagLines.Where(t => t.Line >= from && t.Line <= to && t.Tags.Any(tags.Contains)))
+                foreach (var hit in node.TagLines.Where(t => t.Line - node.StartLine > i && t.Line <= to && t.Tags.Any(tags.Contains)))
                 {
                     evidence.Add(new Evidence(new SourceRef { File = node.File, Line = hit.Line }, LineText(node, hit.Line),
                         $"본문 줄 표시: {string.Join(", ", hit.Tags.Where(tags.Contains))}"));
@@ -383,42 +476,48 @@ public static class Checks
         return (found, $"잠그는 곳 {scopes}개를 봄");
     }
 
-    // 여는 줄의 match 뒤부터 중괄호를 세어, 그 줄이 속한 블록이 닫히는 줄(또는 close 가 걸린 줄)
-    private static (int End, bool Reached) BlockEnd(string[] lines, int start, int column, Regex close)
+    private static int Compare((int Line, int Column) a, (int Line, int Column) b) =>
+        a.Line != b.Line ? a.Line.CompareTo(b.Line) : a.Column.CompareTo(b.Column);
+
+    // 여는 곳(match 끝)부터 중괄호를 세어, 그 블록이 닫히는 '}' 또는 같은 깊이에서 close 가 걸린 곳(둘 다 범위 밖 첫 위치)
+    private static ((int Line, int Column) End, bool Reached) BlockEnd(string[] lines, int start, int column, Regex close)
     {
         var depth = 0;
         for (var i = start; i < lines.Length; i++)
         {
-            var text = i == start ? lines[i][column..] : lines[i];
-            if (close.IsMatch(text) && depth == 0)
+            var text = lines[i];
+            var from = i == start ? column : 0;
+            var closeAt = close.Match(text, from) is { Success: true } cm ? cm.Index : -1;
+            for (var k = from; k < text.Length; k++)
             {
-                return (i, true);
-            }
-            foreach (var ch in text)
-            {
-                if (ch == '{')
+                if (k == closeAt && depth == 0)
+                {
+                    return ((i, k), true);
+                }
+                if (text[k] == '{')
                 {
                     depth++;
                 }
-                else if (ch == '}' && --depth < 0)
+                else if (text[k] == '}' && --depth < 0)
                 {
-                    return (i, true);
+                    return ((i, k), true);
                 }
             }
         }
-        return (lines.Length - 1, false);
+        return ((lines.Length - 1, int.MaxValue), false);
     }
 
-    private static (int End, bool Reached) StatementEnd(string[] lines, int start)
+    // 여는 곳 뒤 문장 끝 ';' 까지(최대 8줄)
+    private static ((int Line, int Column) End, bool Reached) StatementEnd(string[] lines, int start, int column)
     {
         for (var i = start; i < lines.Length && i < start + 8; i++)
         {
-            if (lines[i].Contains(';'))
+            if (lines[i].IndexOf(';', i == start ? column : 0) is var k && k >= 0)
             {
-                return (i, true);
+                return ((i, k + 1), true);
             }
         }
-        return (Math.Min(lines.Length - 1, start + 7), false);
+        return ((Math.Min(lines.Length - 1, start + 7), int.MaxValue), false);
     }
 
     // id 아래 depth 단계 안에서 처음 만나는 bad 함수까지의 경로(id 제외)
@@ -537,14 +636,14 @@ public static class Checks
                 best.Guess ? "경로에 추정 연결(등록·메시지)이 끼어 있습니다." : "진입점에서 정적 호출만으로 닿습니다.",
                 $"{TraceQueries.ShortName(node.Name)}: 진입점 {list.Count}개에서 바로 닿음",
                 $"{best.Entry.Label} 에서 {(rule.Within.Length > 0 ? "within 함수" : "안쪽 연결")}을 거치지 않고 {TraceQueries.ShortName(node.Name)} 까지 옵니다.",
-                id, site, evidence, best.Path));
+                id, site, evidence, best.Path) { Entries = list.Select(h => h.Entry.NodeId).Distinct().ToList() });
         }
         return (found, $"대상 함수 {subjects}개, 진입점 {g.EntryPoints.Count - skipped}개를 봄" + (skipped > 0 ? $"(안쪽 진입점 {skipped}개 제외)" : ""));
     }
 
     // ---- 순서 ----
 
-    private sealed record Step(string CalleeId, string CallerId, int Line, List<string> Path, bool Guess);
+    private sealed record Step(string CalleeId, string CallerId, int Line, int Column, List<string> Path, bool Guess);
 
     // 진입점에서 소스 순서대로 깊이 우선(흐름 요약과 같은 걸음)
     private static List<Step> Steps(Context c, string rootId)
@@ -558,15 +657,18 @@ public static class Checks
             {
                 return;
             }
-            foreach (var e in c.Index.ChildrenOf(id))
+            // 같은 함수를 여러 번 부르면 부를 때마다 한 걸음(두 번째 호출이 순서에서 빠지지 않게). 안쪽은 처음 만난 곳에서만 펼친다.
+            var sites = c.Index.ChildrenOf(id)
+                .Where(e => !c.AddressOnly(e) && c.Graph.Nodes.ContainsKey(e.To))
+                .SelectMany(e => e.CallSites.Count > 0
+                    ? e.CallSites.Select(s => (Edge: e, s.Line, s.Column))
+                    : [(Edge: e, Line: c.Graph.Nodes[id].StartLine, Column: 0)])
+                .OrderBy(x => x.Line).ThenBy(x => x.Column).ToList();
+            foreach (var (e, line, column) in sites)
             {
-                if (c.AddressOnly(e) || !c.Graph.Nodes.TryGetValue(e.To, out var callee))
-                {
-                    continue;
-                }
+                var callee = c.Graph.Nodes[e.To];
                 var g = guess || TraceQueries.IsGuess(e);
-                var line = e.CallSites.Count > 0 ? e.CallSites.Min(s => s.Line) : c.Graph.Nodes[id].StartLine;
-                steps.Add(new Step(e.To, id, line, [.. path, e.To], g));
+                steps.Add(new Step(e.To, id, line, column, [.. path, e.To], g));
                 if (callee.Kind != NodeKind.External && !path.Contains(e.To))
                 {
                     Walk([.. path, e.To], g);
@@ -618,7 +720,7 @@ public static class Checks
                     new Evidence(new SourceRef { File = ca.File, Line = sa.Line }, LineText(ca, sa.Line), $"먼저: {TraceQueries.ShortName(na.Name)}"),
                     new Evidence(new SourceRef { File = cb.File, Line = sb.Line }, LineText(cb, sb.Line), $"나중: {TraceQueries.ShortName(nb.Name)}"),
                 ],
-                sb.Path));
+                sb.Path) { Entries = [entry.NodeId] });
         }
         return (found, $"진입점 {g.EntryPoints.Count}개를 봄" + (saved > 0 ? $", 되돌리는 호출이 있어 넘긴 흐름 {saved}개" : ""));
     }
@@ -660,7 +762,7 @@ public static class Checks
                 from.Id, evidence[0].Site, evidence, [.. c.PathTo(from.Id), group.First().To]));
         }
 
-        var allFiles = g.Inputs.Select(i => i.File.Replace('\\', '/')).Distinct().ToList();
+        var resolver = new IncludeResolver(g.Inputs.Select(i => i.File.Replace('\\', '/')));
         var unread = 0;
         foreach (var file in g.Inputs.Select(i => i.File.Replace('\\', '/')).Where(Cross).Order(StringComparer.Ordinal))
         {
@@ -672,10 +774,12 @@ public static class Checks
             }
             var evidence = new List<Evidence>();
             var sure = true;
+            // 블록 주석·문자열 안의 #include 는 빼려고, 주석을 비운 줄에서 지시문인지 보고 경로는 원래 줄에서 읽는다
+            var clean = CodeText.Clean(lines);
             for (var i = 0; i < lines.Length; i++)
             {
                 var m = IncludeLine.Match(lines[i]);
-                if (m.Success && IncludeTarget(m.Groups["path"].Value, file, allFiles) is { } hit && isTo(hit.File))
+                if (m.Success && IncludeDirective.IsMatch(clean[i]) && resolver.Resolve(m.Groups["path"].Value, file) is { } hit && isTo(hit.File))
                 {
                     sure &= hit.Unique;
                     evidence.Add(new Evidence(new SourceRef { File = file, Line = i + 1 }, lines[i].Trim(),
@@ -694,37 +798,71 @@ public static class Checks
                        (unread > 0 ? $", 읽지 못한 파일 {unread}개" : ""));
     }
 
+    private static readonly Regex IncludeDirective = new(@"^\s*#\s*include\b", RegexOptions.CultureInvariant);
+
     // #include "a/b.h" 가 가리키는 입력 파일: 포함한 파일 기준 상대 경로가 있으면 그것, 아니면 경로 끝이 같은 파일 중
     // 포함한 파일과 가장 많은 폴더를 공유하는 것(각 프로젝트의 pch.h 처럼 같은 이름이 여럿일 때). 컴파일러의 include 경로는 보지 않는다.
-    private static (string File, bool Unique)? IncludeTarget(string include, string includer, List<string> files)
+    // 파일 이름별 색인과 (폴더, include) 결과 캐시를 둬서 include 마다 전체 목록을 훑지 않는다.
+    private sealed class IncludeResolver
     {
-        var inc = include.Replace('\\', '/');
-        var dir = includer.Contains('/') ? includer[..includer.LastIndexOf('/')] : "";
-        var relative = Normalize(dir.Length > 0 ? dir + "/" + inc : inc);
-        if (files.FirstOrDefault(f => f.Equals(relative, StringComparison.OrdinalIgnoreCase)) is { } exact)
+        private readonly Dictionary<string, string> exact_ = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, List<string>> byName_ = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<(string Dir, string Include), (string File, bool Unique)?> cache_ = [];
+
+        public IncludeResolver(IEnumerable<string> files)
         {
-            return (exact, true);
-        }
-        var tail = Normalize(inc);
-        var candidates = files.Where(f => tail.Length > 0 && (f.Equals(tail, StringComparison.OrdinalIgnoreCase) ||
-                                                              f.EndsWith("/" + tail, StringComparison.OrdinalIgnoreCase))).ToList();
-        if (candidates.Count == 0)
-        {
-            return null;
-        }
-        var parts = dir.Split('/');
-        int Shared(string f)
-        {
-            var p = f.Split('/');
-            var n = 0;
-            while (n < parts.Length && n < p.Length - 1 && string.Equals(parts[n], p[n], StringComparison.OrdinalIgnoreCase))
+            foreach (var f in files)
             {
-                n++;
+                if (exact_.TryAdd(f, f))
+                {
+                    var name = f[(f.LastIndexOf('/') + 1)..];
+                    (byName_.TryGetValue(name, out var list) ? list : byName_[name] = []).Add(f);
+                }
             }
-            return n;
         }
-        var best = candidates.OrderByDescending(Shared).ThenBy(f => f.Length).ThenBy(f => f, StringComparer.Ordinal).First();
-        return (best, candidates.Count == 1);
+
+        public (string File, bool Unique)? Resolve(string include, string includer)
+        {
+            var inc = include.Replace('\\', '/');
+            var dir = includer.Contains('/') ? includer[..includer.LastIndexOf('/')] : "";
+            if (cache_.TryGetValue((dir, inc), out var cached))
+            {
+                return cached;
+            }
+            return cache_[(dir, inc)] = Find(inc, dir);
+        }
+
+        private (string File, bool Unique)? Find(string inc, string dir)
+        {
+            if (exact_.TryGetValue(Normalize(dir.Length > 0 ? dir + "/" + inc : inc), out var exact))
+            {
+                return (exact, true);
+            }
+            var tail = Normalize(inc);
+            if (tail.Length == 0 || !byName_.TryGetValue(tail[(tail.LastIndexOf('/') + 1)..], out var named))
+            {
+                return null;
+            }
+            var candidates = named.Where(f => f.Equals(tail, StringComparison.OrdinalIgnoreCase) ||
+                                              f.EndsWith("/" + tail, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (candidates.Count == 0)
+            {
+                return null;
+            }
+            var parts = dir.Split('/');
+            int Shared(string f)
+            {
+                var p = f.Split('/');
+                var n = 0;
+                while (n < parts.Length && n < p.Length - 1 && string.Equals(parts[n], p[n], StringComparison.OrdinalIgnoreCase))
+                {
+                    n++;
+                }
+                return n;
+            }
+            var best = candidates.OrderByDescending(Shared).ThenBy(f => f.Length).ThenBy(f => f, StringComparer.Ordinal).First();
+            return (best, candidates.Count == 1);
+        }
     }
 
     private static string Normalize(string path)

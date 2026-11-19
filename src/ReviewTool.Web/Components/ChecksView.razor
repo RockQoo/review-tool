@@ -140,7 +140,7 @@
     }
 
     private IEnumerable<Checks.Finding> Visible => report is null ? [] : report.Findings.Where(f =>
-        !hidden.Contains(f.Certainty) && (!onlyEntry || EntryNodeId is null || f.Path.Contains(EntryNodeId)));
+        !hidden.Contains(f.Certainty) && (!onlyEntry || EntryNodeId is null || f.Entries.Contains(EntryNodeId)));
 
     private void Toggle(Certainty c)
     {
