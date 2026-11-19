@@ -219,6 +219,45 @@
             </section>
 
             <section class="pane stack">
+                @if (impact is not null)
+                {
+                    var target_ = graph.Nodes[impact.TargetId];
+                    <article class="impact">
+                        <div class="frame-head">
+                            <span class="ico" style="--icon: url('lib/lucide/radar.svg')"></span>
+                            <span class="fname">@target_.Name</span> 을(를) 바꾸면 영향받는 진입점
+                            <b>@(impact.Entries.Count)개</b>
+                            <span class="loc">(거슬러 올라간 함수 @(impact.CallerCount)개)</span>
+                            <button class="link close" @onclick="() => impact = null">✕ 닫기</button>
+                        </div>
+                        @if (impact.Entries.Count == 0)
+                        {
+                            <div class="note warn">분석 안에서는 이 함수까지 오는 진입점을 찾지 못했습니다.</div>
+                        }
+                        <ul class="impact-list">
+                            @foreach (var hit in impact.Entries)
+                            {
+                                var h = hit;
+                                <li>
+                                    <button class="link" title="이 경로를 코드 스택으로 열기" @onclick="() => OpenImpactPath(h)">
+                                        <span class="label">@h.Entry.Label</span>
+                                        <span class="sub">@h.Entry.Group</span>
+                                    </button>
+                                    <span class="path">@string.Join(" → ", h.Path.Select(p => ShortName(graph.Nodes[p].Name)))</span>
+                                </li>
+                            }
+                        </ul>
+                        <details class="limits">
+                            <summary>이 결과가 증명하지 않는 것</summary>
+                            <ul>
+                                @foreach (var l in ImpactAnalyzer.Limits)
+                                {
+                                    <li>@l</li>
+                                }
+                            </ul>
+                        </details>
+                    </article>
+                }
                 @if (stack.Count == 0)
                 {
                     <p class="hint">트리에서 함수를 누르면 진입점부터 그 함수까지의 코드가 위에서 아래로 이어 붙습니다.</p>
@@ -233,6 +272,13 @@
                             <span class="depth">@(i + 1)</span>
                             <span class="fname">@node.Name</span>
                             <span class="loc">@node.File:@node.StartLine</span>
+                            @if (node.Kind != NodeKind.External)
+                            {
+                                var impactId = stack[i];
+                                <button class="link icon-btn" title="이 함수를 바꾸면 영향받는 진입점(패킷)" @onclick="() => ShowImpact(impactId)">
+                                    <span class="ico" style="--icon: url('lib/lucide/radar.svg')"></span> 영향
+                                </button>
+                            }
                             @if (node.Kind != NodeKind.External && Editors.Available.Count > 0)
                             {
                                 var openFile = node.File;
@@ -683,6 +729,25 @@
     }
 
     private string? notice;
+
+    // ---- 변경 영향 ----
+
+    private ImpactAnalyzer.ImpactResult? impact;
+
+    private void ShowImpact(string nodeId)
+    {
+        if (graph is not null)
+        {
+            impact = ImpactAnalyzer.Analyze(graph, nodeId);
+        }
+    }
+
+    private void OpenImpactPath(ImpactAnalyzer.ImpactedEntry hit)
+    {
+        selectedEntry = hit.Entry;
+        expanded.Clear();
+        SelectPath([.. hit.Path]);
+    }
 
     private void OnTargetSaved((string Name, bool Analyze) saved)
     {

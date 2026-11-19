@@ -96,6 +96,18 @@ const frames = await evaluate(`[...document.querySelectorAll('.frame .fname')].m
 console.log('frames', frames);
 await shot('4-code-line-click');
 
+// 신선도 배지와 변경 영향: 마지막 칸(PushMsg)에서 "영향" → 영향받는 진입점 목록 → 하나를 누르면 그 경로가 스택으로
+console.log('freshness', await evaluate(`document.querySelector('.fresh')?.textContent.trim()`));
+await evaluate(`(() => { const f = [...document.querySelectorAll('.frame')].pop(); [...f.querySelectorAll('button')].find(b => b.textContent.includes('영향')).click(); })()`);
+await waitFor(`!!document.querySelector('.impact')`);
+console.log('impact', await evaluate(`document.querySelector('.impact .frame-head').textContent.replace(/\\s+/g, ' ').trim()`));
+await shot('4b-impact');
+await evaluate(`[...document.querySelectorAll('.impact-list button')].find(b => b.textContent.includes('C2ZChat'))?.click()`);
+await sleep(600);
+console.log('frames after impact', await evaluate(`[...document.querySelectorAll('.frame .fname')].map(e => e.textContent)`));
+await evaluate(`[...document.querySelectorAll('.impact button')].find(b => b.textContent.includes('닫기')).click()`);
+await sleep(300);
+
 // 노드 보기: 아이콘으로 전환 → 그래프의 Fanout 노드를 누르면 코드 스택이 진입점→Fanout 으로 바뀐다
 await evaluate(`document.querySelector('.views button[title="노드 보기"]').click()`);
 await waitFor(`!!document.getElementById('graph-canvas')?._cy`);
