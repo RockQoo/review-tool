@@ -86,4 +86,41 @@ public class CSharpAdapterTests
         Assert.Equal(["IRepository"], g.Types.Single(t => t.Name == "Game::Server::SqlRepository").Bases);
         Assert.Contains(g.Inputs, i => i.File == "GameServer/GameServer.csproj");     // 신선도: 프로젝트 파일도
     }
+
+    [Fact]
+    public async Task 최상위_문만_있는_프로젝트_한_폴더의_여러_csproj_노드_상한()
+    {
+        var root = Directory.CreateTempSubdirectory("rt-cs-top").FullName;
+        var data = Directory.CreateTempSubdirectory("rt-cs-data").FullName;
+        try
+        {
+            var app = Directory.CreateDirectory(Path.Combine(root, "App")).FullName;
+            File.WriteAllText(Path.Combine(app, "App.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>");
+            File.WriteAllText(Path.Combine(app, "App.Other.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />");   // 같은 폴더에 하나 더
+            File.WriteAllText(Path.Combine(app, "Program.cs"), "Work.A();\nWork.B();\n");
+            File.WriteAllText(Path.Combine(app, "Work.cs"),
+                "static class Work\n{\n    public static void A() { C(); D(); }\n    public static void B() { }\n    static void C() { }\n    static void D() { }\n}\n");
+
+            var s = CSharpTargetDetector.Suggest(root, "top");
+            var start = Assert.Single(s.Presets, p => p.Enabled);
+            Assert.Equal("시작 함수", start.Preset.Name);                                      // 최상위 문도 시작 지점
+            Assert.Contains("최상위 문(App/Program.cs)", start.Samples);
+
+            var g = await new CSharpTraceAnalyzer().AnalyzeAsync(s.Config, new WorkPaths(data, "top"), null, CancellationToken.None);
+            var main = g.Nodes[Assert.Single(g.EntryPoints).NodeId];
+            Assert.Equal(("Program::Main", "App / Program"), (main.Name, g.EntryPoints[0].Group));
+            Assert.Contains(g.Diagnostics, d => d.Contains(".csproj 가 2개", StringComparison.Ordinal));
+            Assert.Equal(5, g.Nodes.Count);                                                      // Main, A, B, C, D
+
+            s.Config.MaxNodes = 3;                                                               // 상한은 노드를 만들기 전에
+            var cut = await new CSharpTraceAnalyzer().AnalyzeAsync(s.Config, new WorkPaths(data, "top"), null, CancellationToken.None);
+            Assert.Equal(3, cut.Nodes.Count);
+            Assert.Contains(cut.Diagnostics, d => d.Contains("노드 수 제한(3)", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(data, recursive: true);
+        }
+    }
 }

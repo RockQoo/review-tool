@@ -93,14 +93,14 @@ internal sealed class RoslynWalker(TargetConfig config, TraceGraph graph, Projec
             {
                 node.Stop = null;   // 다른 진입점에서 더 얕게 닿았다
             }
-            foreach (var callee in Calls(id))
+            var (callees, limited) = Calls(id);
+            if (limited)
             {
-                if (graph.Nodes.Count >= config.MaxNodes && !graph.Nodes.ContainsKey(callee))
-                {
-                    node.Stop = StopReason.NodeLimit;
-                    NodeLimitHit = true;
-                    break;
-                }
+                node.Stop = StopReason.NodeLimit;   // 새 노드를 더 만들 수 없어 일부 호출을 잇지 못했다
+                NodeLimitHit = true;
+            }
+            foreach (var callee in callees)
+            {
                 if (depth.TryAdd(callee, depth[id] + 1) || depth[callee] > depth[id] + 1)
                 {
                     depth[callee] = depth[id] + 1;
@@ -112,14 +112,17 @@ internal sealed class RoslynWalker(TargetConfig config, TraceGraph graph, Projec
     }
 
     // 함수 본문(람다·지역 함수 포함)의 호출과 객체 생성. 같은 대상을 여러 번 부르면 선 하나에 위치 여러 개.
-    private List<string> Calls(string fromId)
+    // 돌려주는 것은 이미 있던 선의 대상까지 전부(깊이 제한으로 멈췄던 노드를 다시 펼칠 때 빠지지 않게).
+    // limited: 노드 수 상한 때문에 새 노드를 만들지 못한 호출이 있다.
+    private (List<string> Callees, bool Limited) Calls(string fromId)
     {
         if (!symbols_.TryGetValue(fromId, out var from) || Declaration(from) is not { } decl)
         {
-            return [];
+            return ([], false);
         }
         var model = Model(decl.SyntaxTree);
         var result = new List<string>();
+        var limited = false;
         // 최상위 문 진입점은 파일 전체가 아니라 최상위 문만(같은 파일의 클래스 안 호출은 그 메서드 것)
         var body = decl is CompilationUnitSyntax unit
             ? unit.Members.OfType<GlobalStatementSyntax>().SelectMany(g => g.DescendantNodes())
@@ -137,7 +140,16 @@ internal sealed class RoslynWalker(TargetConfig config, TraceGraph graph, Projec
             {
                 continue;   // 컴파일러가 만든 기본 생성자 등: 코드가 없다
             }
+            if (!graph.Nodes.ContainsKey(IdOf(target)) && graph.Nodes.Count >= config.MaxNodes)
+            {
+                limited = true;   // 상한은 노드를 만들기 "전"에 본다
+                continue;
+            }
             var toId = EnsureNode(target);
+            if (!result.Contains(toId))
+            {
+                result.Add(toId);
+            }
             var pos = (NameToken(expr).GetLocation() ?? expr.GetLocation()).GetLineSpan().StartLinePosition;
             var key = (fromId, toId);
             if (!edges_.TryGetValue(key, out var edge))
@@ -145,7 +157,6 @@ internal sealed class RoslynWalker(TargetConfig config, TraceGraph graph, Projec
                 edge = new TraceEdge { From = fromId, To = toId };
                 edges_[key] = edge;
                 graph.Edges.Add(edge);
-                result.Add(toId);
             }
             var site = new SourceRef { File = Relative(decl.SyntaxTree.FilePath), Line = pos.Line + 1, Column = pos.Character };
             if (!edge.CallSites.Any(s => s.Line == site.Line && s.Column == site.Column))
@@ -153,7 +164,7 @@ internal sealed class RoslynWalker(TargetConfig config, TraceGraph graph, Projec
                 edge.CallSites.Add(site);
             }
         }
-        return result;
+        return (result, limited);
     }
 
     // 호출 위치 = 부르는 메서드 이름이 있는 곳(C++ 쪽 색인과 같은 기준)
@@ -174,7 +185,7 @@ internal sealed class RoslynWalker(TargetConfig config, TraceGraph graph, Projec
 
     // ---- 노드 ----
 
-    private string EnsureNode(IMethodSymbol raw)
+    private (IMethodSymbol Symbol, SyntaxNode? Decl, bool Inside, string Name, string Id) Identify(IMethodSymbol raw)
     {
         var symbol = (raw.ReducedFrom ?? raw).OriginalDefinition;
         var decl = Declaration(symbol);
@@ -182,6 +193,14 @@ internal sealed class RoslynWalker(TargetConfig config, TraceGraph graph, Projec
         var name = QualifiedName(symbol);
         // 프로젝트마다 같은 이름이 있을 수 있어(최상위 문의 Program.<Main>$ 등) 어셈블리(프로젝트) 이름을 붙인다
         var id = inside ? (symbol.GetDocumentationCommentId() ?? symbol.ToDisplayString()) + "@" + symbol.ContainingAssembly?.Name : "ext:" + name;
+        return (symbol, decl, inside, name, id);
+    }
+
+    private string IdOf(IMethodSymbol raw) => Identify(raw).Id;
+
+    private string EnsureNode(IMethodSymbol raw)
+    {
+        var (symbol, decl, inside, name, id) = Identify(raw);
         if (graph.Nodes.ContainsKey(id))
         {
             return id;

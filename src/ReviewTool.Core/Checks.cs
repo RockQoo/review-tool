@@ -479,12 +479,21 @@ public static class Checks
     private static int Compare((int Line, int Column) a, (int Line, int Column) b) =>
         a.Line != b.Line ? a.Line.CompareTo(b.Line) : a.Column.CompareTo(b.Column);
 
-    // 여는 곳(match 끝)부터 중괄호를 세어, 그 블록이 닫히는 '}' 또는 같은 깊이에서 close 가 걸린 곳(둘 다 범위 밖 첫 위치)
-    // 잠금이 문장(lock_guard l(m); / m.lock();)이면 그 줄이 속한 블록 끝까지, 뒤에 블록이 따라오면(C# lock (x) { } ·
-    // using (...) { }) 그 블록 끝까지.
+    private enum LockScope
+    {
+        Enclosing,   // lock_guard l(m); · m.lock(); — 그 줄이 속한 블록 끝까지
+        Block,       // lock (x) { } · using (...) { } — 뒤따르는 블록 끝까지
+        Statement,   // lock (x) Foo(); — 뒤따르는 문장 하나
+    }
+
+    // 여는 곳(match 끝)부터 중괄호를 세어, 범위가 끝나는 '}' 또는 같은 깊이에서 close 가 걸린 곳(둘 다 범위 밖 첫 위치)
     private static ((int Line, int Column) End, bool Reached) BlockEnd(string[] lines, int start, int column, Regex close)
     {
-        var ownBlock = OwnsBlock(lines, start, column);
+        var kind = Classify(lines, start, column);
+        if (kind == LockScope.Statement)
+        {
+            return StatementEnd(lines, start, column);
+        }
         var depth = 0;
         for (var i = start; i < lines.Length; i++)
         {
@@ -501,7 +510,7 @@ public static class Checks
                 {
                     depth++;
                 }
-                else if (text[k] == '}' && (--depth < 0 || (ownBlock && depth == 0)))
+                else if (text[k] == '}' && (--depth < 0 || (kind == LockScope.Block && depth == 0)))
                 {
                     return ((i, k), true);
                 }
@@ -510,31 +519,44 @@ public static class Checks
         return ((lines.Length - 1, int.MaxValue), false);
     }
 
-    // 여는 곳 뒤에서 ';' 보다 '{' 가 먼저 오고 그 '{' 바로 앞이 ')' 이면(lock (x) {) 뒤따르는 블록이 범위다.
-    // scoped_lock l{m}; 의 '{' 는 앞이 이름이라 초기화로 본다.
-    private static bool OwnsBlock(string[] lines, int start, int column)
+    // 괄호가 닫혀(깊이 0 이하) 끝난 바로 뒤의 첫 글자로 정한다: '{' 면 블록, ';' 면 둘러싼 블록, 그 밖(이름)이면 문장 하나.
+    // 그 전에 ';' 를 만나면 둘러싼 블록. scoped_lock l{m}; 의 '{' 는 괄호가 닫히기 전이라 초기화로 지나간다.
+    private static LockScope Classify(string[] lines, int start, int column)
     {
-        var last = ' ';
+        if (column > 0 && column <= lines[start].Length && lines[start][..column].TrimEnd().EndsWith(';'))
+        {
+            return LockScope.Enclosing;   // m.lock(); 처럼 여는 곳이 이미 문장 끝
+        }
+        var paren = 0;
+        var closed = false;
         for (var i = start; i < lines.Length && i < start + 4; i++)
         {
             for (var k = i == start ? column : 0; k < lines[i].Length; k++)
             {
                 var ch = lines[i][k];
+                if (char.IsWhiteSpace(ch))
+                {
+                    continue;
+                }
+                if (closed)
+                {
+                    return ch == '{' ? LockScope.Block : ch == ';' ? LockScope.Enclosing : LockScope.Statement;
+                }
                 if (ch == ';')
                 {
-                    return false;
+                    return LockScope.Enclosing;
                 }
-                if (ch == '{')
+                if (ch == '(')
                 {
-                    return last == ')';
+                    paren++;
                 }
-                if (!char.IsWhiteSpace(ch))
+                else if (ch == ')' && --paren <= 0)
                 {
-                    last = ch;
+                    closed = true;
                 }
             }
         }
-        return false;
+        return LockScope.Enclosing;
     }
 
     // 여는 곳 뒤 문장 끝 ';' 까지(최대 8줄)

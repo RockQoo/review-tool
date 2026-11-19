@@ -33,6 +33,8 @@ public static class ShareReport
             .GroupBy(e => e.NodeId).Select(g => g.First())
             .ToList();
         var shown = entries.Take(Math.Max(1, options.MaxEntries)).ToList();
+        // 여정의 보낸 곳·받는 곳 색인은 한 번만 만든다(Build 는 진입점마다 개수를 새로 센다)
+        var journey = options.Journey && graph.Channels.Count > 0 ? new Journey(graph, index) : null;
 
         var sb = new StringBuilder();
         sb.Append("# 흐름 보고서: ").Append(graph.TargetName).Append("\n\n");
@@ -51,7 +53,7 @@ public static class ShareReport
             {
                 sb.Append("| ").Append(Cell(r.Rule.Name)).Append(" | ")
                   .Append(r.State switch { RuleState.Off => "꺼짐", RuleState.Error => "오류", _ => "돌았음" }).Append(" | ")
-                  .Append(r.State == RuleState.Ran ? r.Count.ToString() : "-").Append(" |\n");
+                  .Append(r.State == RuleState.Ran ? r.Count + (r.Cut ? $" (상한 {Core.Checks.MaxFindingsPerRule}개에서 자름)" : "") : "-").Append(" |\n");
             }
             // 진입점과 무관한 지적(#include 등)은 여기서 한 번만
             var global = checks.Findings.Where(f => f.Entries.Count == 0).ToList();
@@ -82,9 +84,8 @@ public static class ShareReport
                 sb.Append("\n### 호출 트리 (깊이 ").Append(options.TreeDepth).Append(", 분석 범위 밖 함수는 뺌)\n\n```\n")
                   .Append(Tree(graph, index, entry.NodeId, options.TreeDepth).TrimEnd()).Append("\n```\n");
             }
-            if (options.Journey && graph.Channels.Count > 0)
+            if (journey is not null)
             {
-                var journey = new Journey(graph, index);
                 sb.Append('\n').Append(Demote(StripLimits(journey.ToText(journey.Build(entry.NodeId), entry.Label))));
             }
             if (options.Summary)
@@ -112,7 +113,8 @@ public static class ShareReport
                 var mine = checks.Findings.Where(f => f.Entries.Contains(entry.NodeId)).ToList();
                 if (mine.Count > 0)
                 {
-                    sb.Append("\n### 점검 지적 ").Append(mine.Count).Append("개\n\n");
+                    sb.Append("\n### 점검 지적 ").Append(mine.Count).Append("개")
+                      .Append(mine.Count > MaxFindingsShown ? $" (앞 {MaxFindingsShown}개만)" : "").Append("\n\n");
                     AppendFindings(sb, mine, options.IncludeSource);
                 }
             }
@@ -188,9 +190,11 @@ public static class ShareReport
         "지적이 없다는 것은 \"찾지 못했다\"는 뜻이지 \"문제없다\"는 뜻이 아니다.",
     ];
 
-    private static void AppendFindings(StringBuilder sb, IEnumerable<Checks.Finding> findings, bool includeSource)
+    private const int MaxFindingsShown = 50;
+
+    private static void AppendFindings(StringBuilder sb, IReadOnlyList<Checks.Finding> findings, bool includeSource)
     {
-        foreach (var f in findings.Take(50))
+        foreach (var f in findings.Take(MaxFindingsShown))
         {
             sb.Append("- **").Append(f.Rule).Append("** ").Append(f.Title).Append(" · 확실도 ").Append(Core.Checks.CertaintyText(f.Certainty))
               .Append(" · ").Append(f.Site).Append('\n');
@@ -203,6 +207,10 @@ public static class ShareReport
                 }
                 sb.Append('\n');
             }
+        }
+        if (findings.Count > MaxFindingsShown)
+        {
+            sb.Append("- … 외 ").Append(findings.Count - MaxFindingsShown).Append("개는 생략(전체는 화면의 점검 보기나 review-tool check)\n");
         }
     }
 

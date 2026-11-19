@@ -55,11 +55,20 @@
     private int entryCount;
     private IJSObjectReference? module;
 
+    // 지금 보이는 보고서를 만든 대상·결과·진입점. 바뀌면 보고서를 지운다(다른 대상 이름으로 내려받지 않게).
+    private (string Target, TraceGraph Graph, string? Entry)? shownFor;
+
     protected override void OnParametersSet()
     {
         if (EntryNodeId is null)
         {
             all = true;
+        }
+        if (shownFor is not null && shownFor != (Target, Graph, EntryNodeId))
+        {
+            text = null;
+            note = null;
+            shownFor = null;
         }
     }
 
@@ -81,6 +90,7 @@
             }
         }
         text = ShareReport.Build(Graph, Index, options, checks);
+        shownFor = (Target, Graph, EntryNodeId);
         entryCount = options.EntryNodeIds.Count == 0 ? Math.Min(Graph.EntryPoints.Count, options.MaxEntries) : 1;
         note = null;
     }
@@ -94,7 +104,11 @@
 
     private async Task Download()
     {
-        var name = $"{Target}-report-{DateTime.Now:yyyyMMdd-HHmm}.md";
+        if (text is null || shownFor is null)
+        {
+            return;
+        }
+        var name = $"{shownFor.Value.Target}-report-{DateTime.Now:yyyyMMdd-HHmm}.md";
         await (await Module()).InvokeVoidAsync("downloadText", name, text);
         note = $"내려받음: {name}";
     }

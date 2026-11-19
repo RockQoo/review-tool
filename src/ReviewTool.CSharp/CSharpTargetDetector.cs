@@ -51,6 +51,20 @@ public static class CSharpTargetDetector
         return cs;
     }
 
+    private static bool HasTopLevelStatements(string file)
+    {
+        try
+        {
+            var root = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(File.ReadAllText(file)).GetRoot();
+            return root is Microsoft.CodeAnalysis.CSharp.Syntax.CompilationUnitSyntax u &&
+                   u.Members.OfType<Microsoft.CodeAnalysis.CSharp.Syntax.GlobalStatementSyntax>().Any();
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+    }
+
     public static TargetSuggestion Suggest(string folder, string? name = null)
     {
         var root = Path.GetFullPath(folder).TrimEnd('\\', '/');
@@ -99,7 +113,15 @@ public static class CSharpTargetDetector
         {
             var found = all.Where(f => ReferenceEquals(f.Rule, rules[i])).ToList();
             var samples = found.Select(f => f.ClassName is null ? f.Method : $"{f.ClassName}.{f.Method}").Distinct().Take(4).ToList();
-            detected.Add(new DetectedPreset(Presets[i], found.Select(f => (f.ClassName, f.Method)).Distinct().Count(), samples));
+            var count = found.Select(f => (f.ClassName, f.Method)).Distinct().Count();
+            if (Presets[i].Name == CSharpTraceAnalyzer.StartRule)
+            {
+                // 최상위 문(top-level statements) 파일도 시작 지점이다(정규식으로는 못 찾아 구문으로 센다)
+                var topLevel = files.Where(HasTopLevelStatements).Select(f => Path.GetRelativePath(root, f).Replace('\\', '/')).ToList();
+                count += topLevel.Count;
+                samples.AddRange(topLevel.Take(4 - Math.Min(4, samples.Count)).Select(f => $"최상위 문({f})"));
+            }
+            detected.Add(new DetectedPreset(Presets[i], count, samples));
         }
         var specific = detected.Take(3).Where(d => d.Matches > 0).ToList();
         var chosen = specific.Count > 0 ? specific : detected.Skip(3).Take(1).Where(d => d.Matches > 0).ToList();

@@ -72,6 +72,7 @@ public sealed class CSharpTraceAnalyzer : ITraceAnalyzer
         var csprojs = SourceFiles.Enumerate(config.Root, f => f.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase), config.Exclude).ToList();
         var projects = ProjectSet.Build(config.Root, files, csprojs, ct);
         var unresolvedNames = projects.UnresolvedNames(ct);
+        graph.Diagnostics.AddRange(projects.Notes);
 
         var walker = new RoslynWalker(config, graph, projects, filter);
         var found = FindEntryPoints(config, files);

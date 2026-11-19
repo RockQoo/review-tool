@@ -25,6 +25,7 @@ internal sealed class ProjectSet
 
     public List<CSharpCompilation> Compilations { get; } = [];
     public List<SyntaxTree> Trees { get; } = [];   // 분석 범위의 소스(implicit using 은 빼고)
+    public List<string> Notes { get; } = [];       // 분석 진단에 그대로 남길 것
 
     public SemanticModel Model(SyntaxTree tree) =>
         models_.TryGetValue(tree, out var m) ? m : models_[tree] = owner_[tree].GetSemanticModel(tree);
@@ -36,8 +37,14 @@ internal sealed class ProjectSet
         var set = new ProjectSet();
         var parse = new CSharpParseOptions(LanguageVersion.Preview);
         var references = RuntimeReferences();
+        // 폴더 → 그 폴더의 .csproj 들. 한 폴더에 여럿이면(멀티 타기팅 변형 등) 소스를 나눌 수 없어 하나로 묶는다(참조는 합집합).
         var projects = projectFiles.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(p => Path.GetDirectoryName(p)!, p => p, StringComparer.OrdinalIgnoreCase);
+            .GroupBy(p => Path.GetDirectoryName(p)!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Order(StringComparer.OrdinalIgnoreCase).ToList(), StringComparer.OrdinalIgnoreCase);
+        foreach (var (dir, list) in projects.Where(kv => kv.Value.Count > 1))
+        {
+            set.Notes.Add($"한 폴더에 .csproj 가 {list.Count}개라 하나로 묶어 해석함: {string.Join(", ", list.Select(Path.GetFileName))}");
+        }
 
         // 파일 → 가장 가까운 프로젝트 폴더("" = 프로젝트 없음)
         var byProject = sourceFiles.GroupBy(f => Owner(f, projects.Keys) ?? "", StringComparer.OrdinalIgnoreCase)
@@ -55,9 +62,10 @@ internal sealed class ProjectSet
             }
             built[dir] = null;
             var refs = new List<MetadataReference>(references);
-            if (depth < 32 && projects.TryGetValue(dir, out var csproj))
+            if (depth < 32 && projects.TryGetValue(dir, out var csprojs))
             {
-                foreach (var dep in ProjectReferences(csproj).Select(Path.GetDirectoryName).OfType<string>())
+                foreach (var dep in csprojs.SelectMany(ProjectReferences).Select(Path.GetDirectoryName).OfType<string>()
+                             .Distinct(StringComparer.OrdinalIgnoreCase).Where(d => !string.Equals(d, dir, StringComparison.OrdinalIgnoreCase)))
                 {
                     if (projects.ContainsKey(dep) && Compile(dep, depth + 1) is { } c)
                     {
@@ -67,9 +75,10 @@ internal sealed class ProjectSet
             }
             var own = (byProject.GetValueOrDefault(dir) ?? []).Select(f => trees[f]).ToList();
             var all = own.Append(CSharpSyntaxTree.ParseText(ImplicitUsings, parse, path: "")).ToList();
-            var name = dir.Length == 0 ? "loose" : Path.GetFileNameWithoutExtension(projects.GetValueOrDefault(dir) ?? dir);
+            var mine = projects.GetValueOrDefault(dir) ?? [];
+            var name = mine.Count == 0 ? "loose" : Path.GetFileNameWithoutExtension(mine[0]);
             var compilation = CSharpCompilation.Create(name, all, refs,
-                new CSharpCompilationOptions(projects.TryGetValue(dir, out var p) && IsExe(p) ? OutputKind.ConsoleApplication : OutputKind.DynamicallyLinkedLibrary,
+                new CSharpCompilationOptions(mine.Any(IsExe) ? OutputKind.ConsoleApplication : OutputKind.DynamicallyLinkedLibrary,
                                              allowUnsafe: true, nullableContextOptions: NullableContextOptions.Enable));
             foreach (var t in own)
             {

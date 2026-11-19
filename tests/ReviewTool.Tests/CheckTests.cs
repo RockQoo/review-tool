@@ -369,4 +369,31 @@ public class CheckTests
         Assert.Equal(["E1", "F", "S"], f.Path);                       // 대표 경로는 가까운 진입점
         Assert.Equal(["E2", "M", "F"], Checks.PathFrom(g.Graph, new TraceIndex(g.Graph), "E2", "F"));
     }
+
+    [Theory]
+    // C# lock 문: 뒤따르는 블록 또는 문장 하나만
+    [InlineData("    lock (gate_)\n    {\n        Send();\n    }\n    Send();", new[] { 5 })]
+    [InlineData("    lock (gate_) Send();\n    Send();", new[] { 3 })]
+    // C++: RAII 는 둘러싼 블록 끝까지, m.lock(); 은 unlock 까지(다음 줄의 if 블록에 속지 않는다)
+    [InlineData("    std::scoped_lock l{m};\n    Send();\n    if (x) { Send(); }", new[] { 4, 5 })]
+    [InlineData("    m.lock();\n    if (x) { Send(); }\n    Send();\n    m.unlock();\n    Send();", new[] { 4, 5 })]
+    public void 잠금_범위는_모양에_따라_다르다(string body, int[] inside)
+    {
+        var code = "void F()\n{\n" + body + "\n}";
+        var g = new G()
+            .Node("F", "Net::Hub::F", "Core/Hub.cpp", 1, code)
+            .Node("S", "Net::Session::Send", "Core/Session.cpp", 40, "void Send() {}");
+        var lines = code.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            for (var at = lines[i].IndexOf("Send(", StringComparison.Ordinal); at >= 0; at = lines[i].IndexOf("Send(", at + 1, StringComparison.Ordinal))
+            {
+                g.Sites("F", "S", (i + 1, at));
+            }
+        }
+
+        var f = Assert.Single(g.Run(Rule(Checks.ForbidInScope)).Findings);
+
+        Assert.Equal(inside, f.Evidence.Select(e => e.Site.Line).Order());
+    }
 }
