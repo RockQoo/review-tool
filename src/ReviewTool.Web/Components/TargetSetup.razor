@@ -1,0 +1,186 @@
+@using ReviewTool.Core
+@using ReviewTool.Cpp
+@using ReviewTool.Web.Services
+@inject TraceWorkspace Workspace
+
+@* 대상 추가: 폴더 고르기 → 설정 제안 확인·수정 → targets/<이름>.json 저장 *@
+<section class="setup">
+    <h2>분석 대상 추가</h2>
+
+    @if (suggestion is null)
+    {
+        <p class="hint-line">분석할 C++ 서버 저장소 폴더를 고르세요. <span class="proj-mark">프로젝트</span> 표시는 .sln/.vcxproj/CMakeLists.txt 가 있는 폴더입니다.</p>
+        <div class="path-row">
+            <input class="path" @bind="path" @bind:event="oninput" placeholder="예: D:\Work\MyServer" @onkeydown="OnPathKey" />
+            <button @onclick="() => Browse(path)">이동</button>
+            <button class="primary" @onclick="Detect" disabled="@(string.IsNullOrWhiteSpace(path) || busy)">이 폴더로 설정 만들기</button>
+            <button class="link" @onclick="OnCancel">취소</button>
+        </div>
+        @if (error is not null)
+        {
+            <p class="error">@error</p>
+        }
+        <div class="folders">
+            @if (!string.IsNullOrWhiteSpace(path))
+            {
+                <button class="folder up" @onclick="Up"><span class="ico" style="--icon: url('lib/lucide/corner-left-up.svg')"></span> 상위 폴더</button>
+            }
+            @foreach (var f in folders)
+            {
+                <button class="folder" @onclick="() => Browse(f.FullPath)" @ondblclick="() => Browse(f.FullPath)">
+                    <span class="ico" style="--icon: url('lib/lucide/@(f.IsProject ? "folder-code" : "folder").svg')"></span> @f.Name
+                    @if (f.IsProject)
+                    {
+                        <span class="proj-mark">프로젝트</span>
+                    }
+                </button>
+            }
+            @if (folders.Count == 0)
+            {
+                <p class="hint-line">하위 폴더가 없습니다.</p>
+            }
+        </div>
+        @if (busy)
+        {
+            <p class="hint-line">폴더를 살펴보는 중…</p>
+        }
+    }
+    else
+    {
+        var c = suggestion.Config;
+        <div class="form">
+            <label>이름 <input @bind="c.Name" /></label>
+            <div class="row"><span class="k">폴더</span><span class="v mono">@c.Root</span></div>
+            <div class="row"><span class="k">컴파일 옵션</span><span class="v">@(c.Cpp.CompileFrom == "vcxproj" ? "Visual Studio 프로젝트(.vcxproj)에서 읽음" : "compile_flags / 추측")</span></div>
+            <label>분석 범위 <input class="mono" value="@string.Join(", ", c.Include)" @onchange="e => c.Include = SplitList(e.Value)" placeholder="비우면 전체 (예: Server/**)" /></label>
+            <label>제외 <input class="mono" value="@string.Join(", ", c.Exclude)" @onchange="e => c.Exclude = SplitList(e.Value)" placeholder="예: 3rd/**" /></label>
+            <div class="row"><span class="k">.cpp</span><span class="v">@(suggestion.SourceCount)개</span></div>
+
+            <div class="presets">
+                <div class="k">진입점(패킷 핸들러) 찾는 규칙</div>
+                @foreach (var p in suggestion.Presets)
+                {
+                    <label class="preset @(p.Matches == 0 ? "none" : "")">
+                        <input type="checkbox" checked="@p.Enabled" disabled="@(p.Matches == 0)"
+                               @onchange="e => p.Enabled = e.Value is true" />
+                        <b>@p.Preset.Name</b> <span class="count">@(p.Matches)개</span>
+                        <span class="desc">@p.Preset.Description</span>
+                        @if (p.Samples.Count > 0)
+                        {
+                            <span class="samples mono">@string.Join(", ", p.Samples)@(p.Matches > p.Samples.Count ? " …" : "")</span>
+                        }
+                    </label>
+                }
+            </div>
+
+            @foreach (var n in suggestion.Notes)
+            {
+                <p class="hint-line">· @n</p>
+            }
+            @if (Workspace.TargetExists(c.Name))
+            {
+                <label class="warn-line"><input type="checkbox" @bind="overwrite" /> 같은 이름(@c.Name)의 설정이 이미 있습니다. 덮어쓰기</label>
+            }
+            @if (error is not null)
+            {
+                <p class="error">@error</p>
+            }
+            <p class="hint-line">저장 위치: targets/@(CppTargetDetector.SanitizeName(c.Name)).json — 내 PC 경로가 들어 있어 git 에 올리지 않습니다. 나중에 직접 고쳐도 됩니다.</p>
+            <div class="path-row">
+                <button class="primary" @onclick="() => Save(true)" disabled="@(!CanSave)">저장하고 분석</button>
+                <button @onclick="() => Save(false)" disabled="@(!CanSave)">저장만</button>
+                <button class="link" @onclick="() => { suggestion = null; error = null; }">← 폴더 다시 고르기</button>
+                <button class="link" @onclick="OnCancel">취소</button>
+            </div>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter] public EventCallback<(string Name, bool Analyze)> OnSaved { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private string path = "";
+    private IReadOnlyList<FolderEntry> folders = [];
+    private TargetSuggestion? suggestion;
+    private string? error;
+    private bool busy;
+    private bool overwrite;
+
+    private bool CanSave => suggestion is not null && !string.IsNullOrWhiteSpace(suggestion.Config.Name) &&
+                            (overwrite || !Workspace.TargetExists(suggestion.Config.Name));
+
+    protected override void OnInitialized() => Browse("");
+
+    private void Browse(string? target)
+    {
+        error = null;
+        path = target ?? "";
+        folders = TraceWorkspace.ListFolders(path);
+        if (path.Length > 0 && !Directory.Exists(path))
+        {
+            error = "폴더가 없습니다.";
+        }
+    }
+
+    private void Up()
+    {
+        var parent = Directory.GetParent(path.TrimEnd('\\', '/'));
+        Browse(parent?.FullName ?? "");
+    }
+
+    private void OnPathKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            Browse(path);
+        }
+    }
+
+    private async Task Detect()
+    {
+        busy = true;
+        error = null;
+        try
+        {
+            var folder = path;
+            suggestion = await Task.Run(() => Workspace.Suggest(folder));
+            overwrite = false;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task Save(bool analyze)
+    {
+        if (suggestion is null)
+        {
+            return;
+        }
+        var config = suggestion.Config;
+        config.EntryPoints = suggestion.Presets.Where(p => p.Enabled).Select(p => p.Preset.ToRule()).ToList();
+        if (config.EntryPoints.Count == 0)
+        {
+            error = "진입점 규칙을 하나 이상 고르세요. 맞는 규칙이 없으면 저장 후 json 의 entryPoints 에 직접 적어야 합니다.";
+            return;
+        }
+        try
+        {
+            Workspace.SaveTarget(config, overwrite);
+            await OnSaved.InvokeAsync((config.Name, analyze));
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private static List<string> SplitList(object? value) =>
+        (value?.ToString() ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+}

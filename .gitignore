@@ -1,0 +1,13 @@
+bin/
+obj/
+.vs/
+*.user
+# 분석 결과·clangd 색인 (대상 소스 코드가 들어 있음)
+data/
+STATUS.md
+.review/
+code-review/
+.qa/
+QA-LOG.md
+# 분석 대상 설정: 내 PC 경로가 들어 있는 로컬 파일 (만드는 법은 targets/README.md)
+targets/*.json

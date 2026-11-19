@@ -1,0 +1,7 @@
+{
+  "name": "review-tool",
+  "commands": [
+    { "name": "test", "cmd": "dotnet test ReviewTool.slnx --nologo", "summary": "(통과|Passed):\\s+\\d+" },
+    { "name": "build", "cmd": "dotnet build ReviewTool.slnx --nologo" }
+  ]
+}

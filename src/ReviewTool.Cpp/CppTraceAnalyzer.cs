@@ -1,0 +1,226 @@
+using System.Diagnostics;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+using ReviewTool.Core;
+
+namespace ReviewTool.Cpp;
+
+// C++ 어댑터. 진입점을 정규식으로 찾고, clangd 의 호출 계층(callHierarchy)으로 아래를 따라간다.
+public sealed class CppTraceAnalyzer : ITraceAnalyzer
+{
+    public string Language => "cpp";
+
+    public async Task<TraceGraph> AnalyzeAsync(TargetConfig config, WorkPaths paths, IProgress<AnalysisProgress>? progress,
+                                               CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var graph = new TraceGraph
+        {
+            TargetName = config.Name,
+            RootDirectory = config.Root,
+            Language = Language,
+            AnalyzedAt = DateTimeOffset.Now,
+            AnalyzerVersion = typeof(CppTraceAnalyzer).Assembly.GetName().Version?.ToString() ?? "",
+        };
+
+        var filter = GlobMatcher.Build(config.Include, config.Exclude);
+
+        progress?.Report(new AnalysisProgress("prepare", "컴파일 옵션 정리 중"));
+        var entries = CompileDatabase.Build(config, filter, graph.Diagnostics);
+        CompileDatabase.Write(entries, paths.CompileDbDirectory);
+        progress?.Report(new AnalysisProgress("prepare", $"분석할 .cpp {entries.Count}개"));
+        if (entries.Count == 0)
+        {
+            graph.Diagnostics.Add("분석할 .cpp 가 없습니다. include/exclude 설정을 확인하세요.");
+            return graph;
+        }
+
+        var clangd = ClangdSession.FindClangd(config.Cpp.Clangd);
+        await using var session = await ClangdSession.StartAsync(clangd, config.Root, paths.CompileDbDirectory, cancellationToken);
+        session.IndexProgress += m => progress?.Report(new AnalysisProgress("index", m));
+
+        // 색인은 파일을 하나 열어야 시작하는 경우가 있어 먼저 하나 연다.
+        var first = entries[0].File;
+        await session.OpenAsync(first, cancellationToken);
+        progress?.Report(new AnalysisProgress("index", "clangd 색인 중 (처음 한 번은 오래 걸림)"));
+        var indexed = await session.WaitForIndexAsync(TimeSpan.FromSeconds(8),
+                                                      TimeSpan.FromSeconds(config.Cpp.IndexTimeoutSeconds), cancellationToken);
+        await session.CloseAsync(first, cancellationToken);
+        if (!indexed)
+        {
+            graph.Diagnostics.Add($"clangd 색인이 {config.Cpp.IndexTimeoutSeconds}초 안에 끝나지 않아 일부 호출이 빠졌을 수 있습니다.");
+        }
+
+        var walker = new CallTreeWalker(config, graph, session, filter);
+        var found = FindEntryPoints(config, filter);
+        progress?.Report(new AnalysisProgress("entry", $"진입점 후보 {found.Count}개"));
+        var groupPrefix = CommonDirectoryPrefix(found.Select(f => f.RelativeFile));
+
+        var done = 0;
+        foreach (var candidate in found)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report(new AnalysisProgress("trace", candidate.Method, done++, found.Count));
+            var root = await walker.ResolveEntryAsync(candidate, cancellationToken);
+            if (root is null)
+            {
+                graph.Diagnostics.Add($"진입점의 정의를 찾지 못함: {candidate.RelativeFile}:{candidate.Line} {candidate.Method}");
+                continue;
+            }
+            if (graph.EntryPoints.Any(e => e.NodeId == root))
+            {
+                continue;
+            }
+            var node = graph.Nodes[root];
+            graph.EntryPoints.Add(new EntryPoint
+            {
+                NodeId = root,
+                Label = MakeLabel(candidate, node),
+                Group = MakeGroup(candidate, groupPrefix),
+                RegisteredAt = new SourceRef { File = candidate.RelativeFile, Line = candidate.Line, Column = candidate.Column },
+                Detector = candidate.Rule.Name,
+            });
+            await walker.WalkAsync(root, cancellationToken);
+        }
+
+        if (walker.NodeLimitHit)
+        {
+            graph.Diagnostics.Add($"노드 수 제한({config.MaxNodes})에 걸려 일부를 펼치지 않았습니다.");
+        }
+        graph.Diagnostics.AddRange(walker.Failures.Take(30));
+        if (walker.Failures.Count > 30)
+        {
+            graph.Diagnostics.Add($"... 외 실패 {walker.Failures.Count - 30}건");
+        }
+
+        graph.EntryPoints = graph.EntryPoints.OrderBy(e => e.Group).ThenBy(e => e.Label).ToList();
+        graph.DurationMs = stopwatch.ElapsedMilliseconds;
+        progress?.Report(new AnalysisProgress("done", $"노드 {graph.Nodes.Count}개, 호출 {graph.Edges.Count}개, {graph.DurationMs / 1000.0:F1}초"));
+        return graph;
+    }
+
+    public sealed record EntryCandidate(EntryPointRule Rule, string File, string RelativeFile, int Line, int Column,
+                                          string Method, string? ClassName, string? Label);
+
+    internal static List<EntryCandidate> FindEntryPoints(TargetConfig config, Func<string, bool> filter)
+    {
+        var result = new List<EntryCandidate>();
+        foreach (var rule in config.EntryPoints)
+        {
+            var regex = new Regex(rule.Pattern, RegexOptions.Multiline);
+            var ruleFilter = rule.Files.Count > 0 ? GlobMatcher.Build(rule.Files, []) : (_ => true);
+            foreach (var file in EnumerateCode(config.Root))
+            {
+                var rel = Path.GetRelativePath(config.Root, file).Replace('\\', '/');
+                if (!filter(rel) || !ruleFilter(rel))
+                {
+                    continue;
+                }
+                var text = File.ReadAllText(file);
+                foreach (Match m in regex.Matches(text))
+                {
+                    var method = m.Groups["method"];
+                    if (!method.Success)
+                    {
+                        continue;
+                    }
+                    if (IsInComment(text, m.Index))
+                    {
+                        continue;
+                    }
+                    var (line, col) = ToLineColumn(text, method.Index);
+                    result.Add(new EntryCandidate(rule, file, rel, line, col, method.Value,
+                        m.Groups["class"].Success ? m.Groups["class"].Value : null,
+                        m.Groups["label"].Success ? m.Groups["label"].Value : null));
+                }
+            }
+        }
+        return result;
+    }
+
+    // 주석 속 예시 코드(`Register(this, &X::Handle)` 같은)를 진입점으로 잡지 않기 위한 근사 판정:
+    // 같은 줄 앞에 // 가 있거나, 줄이 * 로 시작하는(블록 주석 안) 경우.
+    internal static bool IsInComment(string text, int index)
+    {
+        var lineStart = text.LastIndexOf('\n', Math.Max(0, index - 1)) + 1;
+        var before = text[lineStart..index];
+        return before.Contains("//", StringComparison.Ordinal) || before.TrimStart().StartsWith('*') ||
+               before.TrimStart().StartsWith("/*", StringComparison.Ordinal);
+    }
+
+    private static IEnumerable<string> EnumerateCode(string root)
+    {
+        foreach (var file in Directory.EnumerateFiles(root, "*.*", SearchOption.AllDirectories))
+        {
+            var ext = Path.GetExtension(file).ToLowerInvariant();
+            if (ext is ".cpp" or ".cc" or ".cxx" or ".h" or ".hpp" &&
+                !CompileDatabase.IsBuildOutput(Path.GetRelativePath(root, file)))
+            {
+                yield return file;
+            }
+        }
+    }
+
+    // 1부터 세는 줄, 0부터 세는 열(UTF-16 코드 단위, LSP 기본과 같음)
+    internal static (int Line, int Column) ToLineColumn(string text, int index)
+    {
+        var line = 1;
+        var lineStart = 0;
+        for (var i = 0; i < index; i++)
+        {
+            if (text[i] == '\n')
+            {
+                line++;
+                lineStart = i + 1;
+            }
+        }
+        return (line, index - lineStart);
+    }
+
+    // 패킷 핸들러는 두 번째 인자 타입이 패킷이라, 시그니처에서 C2ZMove 같은 이름을 뽑는다.
+    private static string MakeLabel(EntryCandidate candidate, TraceNode node)
+    {
+        if (!string.IsNullOrEmpty(candidate.Label))
+        {
+            return candidate.Label;
+        }
+        var signatureEnd = node.Code.IndexOf('{');
+        var signature = signatureEnd > 0 ? node.Code[..signatureEnd] : node.Code;
+        var packet = PacketParam.Match(signature);
+        return packet.Success ? packet.Groups[1].Value : candidate.Method;
+    }
+
+    private static readonly Regex PacketParam = new(@"const\s+(?:\w+::)*([A-Z]\d?2[A-Z]\w+|[A-Z]2[A-Z]\w+)\s*&", RegexOptions.Compiled);
+
+    private static string MakeGroup(EntryCandidate candidate, string prefix)
+    {
+        var rel = candidate.RelativeFile[prefix.Length..];
+        var top = rel.Split('/')[0];
+        var cls = candidate.ClassName ?? Path.GetFileNameWithoutExtension(candidate.File);
+        return top == rel ? cls : $"{top} / {cls}";
+    }
+
+    private static string CommonDirectoryPrefix(IEnumerable<string> files)
+    {
+        string? prefix = null;
+        foreach (var f in files)
+        {
+            var dir = f.Contains('/') ? f[..(f.LastIndexOf('/') + 1)] : "";
+            if (prefix is null)
+            {
+                prefix = dir;
+                continue;
+            }
+            var n = 0;
+            while (n < prefix.Length && n < dir.Length && char.ToLowerInvariant(prefix[n]) == char.ToLowerInvariant(dir[n]))
+            {
+                n++;
+            }
+            prefix = prefix[..n];
+        }
+        prefix ??= "";
+        var slash = prefix.LastIndexOf('/');
+        return slash >= 0 ? prefix[..(slash + 1)] : "";
+    }
+
+}

@@ -1,0 +1,764 @@
+﻿@page "/"
+@rendermode InteractiveServer
+@using ReviewTool.Core
+@using ReviewTool.Web.Services
+@implements IAsyncDisposable
+@inject TraceWorkspace Workspace
+@inject IJSRuntime JS
+
+<PageTitle>review-tool</PageTitle>
+
+<div class="app">
+    <header class="topbar">
+        <strong class="brand">review-tool</strong>
+        <select value="@target" @onchange="OnTargetChanged" disabled="@(Workspace.RunningTarget is not null)">
+            @foreach (var t in Workspace.ListTargets())
+            {
+                <option value="@t">@t</option>
+            }
+        </select>
+        <button class="icon-btn" title="분석 대상 추가 (폴더 고르기)" @onclick="() => adding = true"
+                disabled="@(Workspace.RunningTarget is not null)">
+            <span class="ico" style="--icon: url('lib/lucide/plus.svg')"></span> 대상 추가
+        </button>
+        @if (Workspace.RunningTarget is null)
+        {
+            <button @onclick="Analyze" disabled="@(target is null || adding)">재분석</button>
+        }
+        else
+        {
+            <button @onclick="Workspace.CancelAnalysis">취소</button>
+        }
+        <span class="views" role="group" aria-label="보기 방식">
+            @foreach (var (mode, icon, title) in ViewModes)
+            {
+                <button class="icon @(viewMode == mode ? "on" : "")" title="@title" aria-label="@title"
+                        aria-pressed="@(viewMode == mode ? "true" : "false")" @onclick="() => SetViewMode(mode)">
+                    <span class="ico" style="--icon: url('lib/lucide/@(icon).svg')"></span>
+                </button>
+            }
+        </span>
+        <span class="status">@Workspace.StatusMessage</span>
+        @if (Workspace.LastError is not null)
+        {
+            <span class="error">@Workspace.LastError</span>
+        }
+        @if (graph is not null)
+        {
+            <span class="meta">
+                @graph.AnalyzedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm") 분석 ·
+                진입점 @graph.EntryPoints.Count · 함수 @graph.Nodes.Count · 호출 @graph.Edges.Count
+                @if (graph.Diagnostics.Count > 0)
+                {
+                    <button class="link warn" @onclick="() => showDiagnostics = !showDiagnostics">못 본 것 @graph.Diagnostics.Count</button>
+                }
+            </span>
+        }
+    </header>
+
+    @if (showDiagnostics && graph is not null)
+    {
+        <section class="diagnostics">
+            <p>분석이 확인하지 못한 것입니다. 비어 있는 호출이 "호출 없음"을 뜻하지 않을 수 있습니다.</p>
+            <ul>
+                @foreach (var d in graph.Diagnostics)
+                {
+                    <li>@d</li>
+                }
+            </ul>
+        </section>
+    }
+
+    @if (adding || target is null)
+    {
+        <main class="empty">
+            @if (target is null && !adding)
+            {
+                <p>아직 분석 대상이 없습니다. 분석할 서버 폴더를 고르면 설정을 자동으로 만듭니다.</p>
+            }
+            <TargetSetup OnSaved="OnTargetSaved" OnCancel="() => adding = false" />
+        </main>
+    }
+    else if (graph is null || index is null)
+    {
+        <main class="empty">
+            @if (Workspace.RunningTarget == target)
+            {
+                <p><b>@target</b> 분석 중입니다. 처음에는 clangd 색인 때문에 몇 분 걸릴 수 있습니다.</p>
+            }
+            else
+            {
+                <p><b>@target</b>의 분석 결과가 아직 없습니다. 위의 <b>재분석</b>을 누르세요.</p>
+            }
+            <p class="hint-line">설정 파일: @Workspace.ConfigPath(target)</p>
+        </main>
+    }
+    else
+    {
+        <main class="panes mode-@viewMode">
+            <nav class="pane entries">
+                <input class="search" placeholder="진입점 찾기 (패킷, 함수)" @bind="entryFilter" @bind:event="oninput" />
+                @foreach (var group in FilteredEntries().GroupBy(e => e.Group))
+                {
+                    <div class="group">@group.Key</div>
+                    @foreach (var e in group)
+                    {
+                        <button class="entry @(selectedEntry == e ? "active" : "")" @onclick="() => SelectEntry(e)"
+                                title="@graph.Nodes[e.NodeId].Name">
+                            <span class="label">@e.Label</span>
+                            <span class="sub">@ShortName(graph.Nodes[e.NodeId].Name)</span>
+                        </button>
+                    }
+                }
+            </nav>
+
+            <section class="pane tree @(viewMode == "tree" ? "" : "graph-mode")">
+                @if (selectedEntry is null)
+                {
+                    <p class="hint">왼쪽에서 진입점을 고르세요.</p>
+                }
+                else if (viewMode != "tree")
+                {
+                    <div class="tree-tools">
+                        <label>깊이
+                            <select @bind="graphDepth">
+                                <option value="2">2</option>
+                                <option value="3">3</option>
+                                <option value="4">4</option>
+                                <option value="6">6</option>
+                                <option value="99">전체</option>
+                            </select>
+                        </label>
+                        <label><input type="checkbox" @bind="showExternal" /> 외부 호출 보기</label>
+                        <button class="link" @onclick="FitGraph">화면 맞춤</button>
+                        <span class="graph-info">함수 @(graphCount)개@(graphTruncated ? $" (상한 {MaxGraphNodes}개에서 자름)" : "")</span>
+                    </div>
+                    <div id="graph-canvas" class="graph-canvas"></div>
+                    <div class="graph-legend">노드를 누르면 진입점부터 그 함수까지의 코드가 이어 붙습니다 · 점선 테두리 = 깊이 제한으로 더 있음 · 점선 화살표 = 위로 되돌아가는 호출</div>
+                }
+                else
+                {
+                    <div class="tree-tools">
+                        <label><input type="checkbox" @bind="showExternal" /> 외부 호출(std 등) 보기</label>
+                        <button class="link" @onclick="ExpandAll">모두 펼치기</button>
+                        <button class="link" @onclick="CollapseAll">접기</button>
+                    </div>
+                    <div class="tree-body">
+                        @RenderNode([selectedEntry.NodeId], null)
+                    </div>
+                }
+            </section>
+
+            <section class="pane stack">
+                @if (stack.Count == 0)
+                {
+                    <p class="hint">트리에서 함수를 누르면 진입점부터 그 함수까지의 코드가 위에서 아래로 이어 붙습니다.</p>
+                }
+                @for (var i = 0; i < stack.Count; i++)
+                {
+                    var frameIndex = i;
+                    var node = graph.Nodes[stack[i]];
+                    var nextCallLines = i + 1 < stack.Count ? CallLines(stack[i], stack[i + 1]) : new HashSet<int>();
+                    <article class="frame" id="frame-@i">
+                        <div class="frame-head">
+                            <span class="depth">@(i + 1)</span>
+                            <span class="fname">@node.Name</span>
+                            <span class="loc">@node.File:@node.StartLine</span>
+                            @if (i > 0)
+                            {
+                                var site = CallLines(stack[i - 1], stack[i]).Order().FirstOrDefault();
+                                <span class="from">← @graph.Nodes[stack[i - 1]].File:@site 에서 호출</span>
+                            }
+                            <button class="link close" title="여기까지만 보기" @onclick="() => TruncateStack(frameIndex + 1)">✕ 아래 닫기</button>
+                        </div>
+                        @if (node.Kind == NodeKind.External)
+                        {
+                            <div class="note">분석 범위 밖 함수라 코드가 없습니다.</div>
+                        }
+                        else
+                        {
+                            var calls = CallsByLine(stack[i]);
+                            <div class="code">
+                                @{
+                                    var lines = node.Code.Split('\n');
+                                }
+                                @for (var l = 0; l < lines.Length; l++)
+                                {
+                                    var lineNo = node.StartLine + l;
+                                    var hasCalls = calls.TryGetValue(lineNo, out var lineCalls);
+                                    var isNext = nextCallLines.Contains(lineNo);
+                                    var isOpen = openLine == (frameIndex, lineNo);
+                                    <div class="line @(hasCalls ? "call" : "") @(isNext ? "next" : "") @(isOpen ? "open" : "")"
+                                         @onclick="() => ToggleLine(frameIndex, lineNo, hasCalls)">
+                                        <span class="ln">@lineNo</span><span class="src">@lines[l]</span>
+                                    </div>
+                                    @if (isOpen && lineCalls is not null)
+                                    {
+                                        <div class="callees">
+                                            @foreach (var callee in lineCalls)
+                                            {
+                                                var cn = graph.Nodes[callee];
+                                                <button class="chip @KindClass(cn)" @onclick="() => PushFrame(frameIndex, callee)"
+                                                        @onclick:stopPropagation="true" disabled="@(cn.Kind == NodeKind.External)">
+                                                    @ShortName(cn.Name)
+                                                </button>
+                                            }
+                                        </div>
+                                    }
+                                }
+                                @if (node.CodeTruncated)
+                                {
+                                    <div class="note">… 길어서 잘림 (@node.File:@node.EndLine 까지)</div>
+                                }
+                            </div>
+                            @if (node.Stop is not null && node.Stop != StopReason.External)
+                            {
+                                <div class="note">@StopText(node.Stop.Value)</div>
+                            }
+                        }
+                    </article>
+                }
+            </section>
+        </main>
+    }
+</div>
+
+@code {
+    private string? target;
+    private TraceGraph? graph;
+    private TraceIndex? index;
+    private EntryPoint? selectedEntry;
+    private string entryFilter = "";
+    private bool showExternal;
+    private bool showDiagnostics;
+    private readonly HashSet<string> expanded = [];
+    private List<string> stack = [];
+    private (int Frame, int Line)? openLine;
+
+    protected override void OnInitialized()
+    {
+        target = Workspace.ListTargets().FirstOrDefault();
+        Load();
+        Workspace.Changed += OnWorkspaceChanged;
+    }
+
+    private void OnWorkspaceChanged() => InvokeAsync(() =>
+    {
+        if (Workspace.RunningTarget is null)
+        {
+            Load();
+        }
+        StateHasChanged();
+    });
+
+    public async ValueTask DisposeAsync()
+    {
+        Workspace.Changed -= OnWorkspaceChanged;
+        if (graphModule is not null)
+        {
+            try
+            {
+                await graphModule.InvokeVoidAsync("destroy", GraphElementId);
+                await graphModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+        selfRef?.Dispose();
+    }
+
+    // ---- 보기 방식 ----
+
+    private static readonly (string Mode, string Icon, string Title)[] ViewModes =
+    [
+        ("tree", "list-tree", "트리 보기"),
+        ("graph", "network", "노드 보기"),
+        ("wide", "layout-panel-top", "노드 크게 (코드는 아래)"),
+    ];
+
+    private const string GraphElementId = "graph-canvas";
+    private const int MaxGraphNodes = 250;
+    private string viewMode = "tree";
+    private int graphDepth = 3;
+    private int graphCount;
+    private bool graphTruncated;
+    private string? renderedGraphKey;
+    private string? highlightedKey;
+    private IJSObjectReference? graphModule;
+    private DotNetObjectReference<Home>? selfRef;
+    // 그래프 노드 id(g0, g1 ...) ↔ 분석 노드 id. 분석 id 에는 ':' '@' 가 있어 Cytoscape 선택자에 불편하다.
+    private readonly Dictionary<string, string> nodeOfGraphId = [];
+    private readonly Dictionary<string, string> graphIdOfNode = [];
+    // 너비 우선으로 처음 닿은 부모. 노드를 누르면 이걸 거슬러 진입점까지의 경로를 만든다.
+    private readonly Dictionary<string, string> graphParent = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            graphModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/graph.js");
+            selfRef = DotNetObjectReference.Create(this);
+            var saved = await graphModule.InvokeAsync<string?>("getPref", "viewMode");
+            if (saved is not null && saved != viewMode && ViewModes.Any(v => v.Mode == saved))
+            {
+                viewMode = saved;
+                StateHasChanged();
+                return;
+            }
+        }
+        if (graphModule is null)
+        {
+            return;
+        }
+
+        if (viewMode == "tree" || selectedEntry is null || graph is null)
+        {
+            if (renderedGraphKey is not null)
+            {
+                await graphModule.InvokeVoidAsync("destroy", GraphElementId);
+                renderedGraphKey = null;
+            }
+            return;
+        }
+
+        var key = $"{graph.AnalyzedAt:O}|{selectedEntry.NodeId}|{showExternal}|{graphDepth}|{viewMode}";
+        var pathIds = GraphPathOfStack();
+        var pathKey = string.Join(',', pathIds);
+        if (key != renderedGraphKey)
+        {
+            var (elements, rootId, count, truncated) = BuildGraph();
+            await graphModule.InvokeVoidAsync("render", GraphElementId, elements, rootId, pathIds, selfRef);
+            renderedGraphKey = key;
+            highlightedKey = pathKey;
+            if (count != graphCount || truncated != graphTruncated)
+            {
+                graphCount = count;
+                graphTruncated = truncated;
+                StateHasChanged();
+            }
+        }
+        else if (pathKey != highlightedKey)
+        {
+            await graphModule.InvokeVoidAsync("highlight", GraphElementId, pathIds);
+            highlightedKey = pathKey;
+        }
+    }
+
+    private async Task SetViewMode(string mode)
+    {
+        viewMode = mode;
+        renderedGraphKey = null;   // 칸 크기가 바뀌므로 다시 배치
+        if (graphModule is not null)
+        {
+            await graphModule.InvokeVoidAsync("setPref", "viewMode", mode);
+        }
+    }
+
+    private async Task FitGraph()
+    {
+        if (graphModule is not null)
+        {
+            await graphModule.InvokeVoidAsync("fit", GraphElementId);
+        }
+    }
+
+    private (List<object> Elements, string RootId, int Count, bool Truncated) BuildGraph()
+    {
+        nodeOfGraphId.Clear();
+        graphIdOfNode.Clear();
+        graphParent.Clear();
+        var root = selectedEntry!.NodeId;
+        var depthOf = new Dictionary<string, int> { [root] = 0 };
+        var more = new HashSet<string>();
+        var edges = new List<(string From, string To)>();
+        var truncated = false;
+
+        var queue = new Queue<string>();
+        queue.Enqueue(root);
+        while (queue.Count > 0)
+        {
+            var id = queue.Dequeue();
+            var depth = depthOf[id];
+            var children = index!.ChildrenOf(id).Where(c => Visible(graph!.Nodes[c.To])).ToList();
+            if (depth >= graphDepth)
+            {
+                if (children.Count > 0)
+                {
+                    more.Add(id);
+                }
+                continue;
+            }
+            foreach (var c in children)
+            {
+                if (!depthOf.ContainsKey(c.To))
+                {
+                    if (depthOf.Count >= MaxGraphNodes)
+                    {
+                        truncated = true;
+                        more.Add(id);
+                        continue;
+                    }
+                    depthOf[c.To] = depth + 1;
+                    graphParent[c.To] = id;
+                    queue.Enqueue(c.To);
+                }
+                edges.Add((id, c.To));
+            }
+        }
+
+        // 왼쪽→오른쪽 트리 배치: 열 = 깊이, 형제는 아래로 쌓는다. 공유 노드는 처음 닿은 부모 밑에 한 번만.
+        var treeChildren = new Dictionary<string, List<string>>();
+        foreach (var (from, to) in edges.Distinct())
+        {
+            if (graphParent.TryGetValue(to, out var p) && p == from)
+            {
+                (treeChildren.TryGetValue(from, out var list) ? list : treeChildren[from] = []).Add(to);
+            }
+        }
+        var columnX = new Dictionary<int, double>();
+        var x = 0.0;
+        foreach (var d in depthOf.Values.Distinct().Order())
+        {
+            columnX[d] = x;
+            var widest = depthOf.Where(kv => kv.Value == d).Max(kv => ShortName(graph!.Nodes[kv.Key].Name).Length);
+            x += widest * 7.5 + 70;
+        }
+        var position = new Dictionary<string, (double X, double Y)>();
+        var nextY = 0.0;
+        double Place(string id)
+        {
+            double y;
+            if (treeChildren.TryGetValue(id, out var kids) && kids.Count > 0)
+            {
+                var ys = kids.Select(Place).ToList();
+                y = (ys.First() + ys.Last()) / 2;
+            }
+            else
+            {
+                y = nextY;
+                nextY += 34;
+            }
+            position[id] = (columnX[depthOf[id]], y);
+            return y;
+        }
+        Place(root);
+
+        var elements = new List<object>();
+        foreach (var id in depthOf.Keys)
+        {
+            var gid = "g" + graphIdOfNode.Count;
+            graphIdOfNode[id] = gid;
+            nodeOfGraphId[gid] = id;
+            var node = graph!.Nodes[id];
+            var classes = new List<string>();
+            if (id == root) classes.Add("entry");
+            if (node.Kind == NodeKind.External) classes.Add("external");
+            if (node.Stop == StopReason.Hidden) classes.Add("hidden");
+            if (more.Contains(id)) classes.Add("more");
+            var (px, py) = position[id];
+            elements.Add(new
+            {
+                data = new { id = gid, label = ShortName(node.Name) },
+                position = new { x = px, y = py },
+                classes = string.Join(' ', classes),
+            });
+        }
+        foreach (var (from, to) in edges.Distinct())
+        {
+            var (a, b) = (graphIdOfNode[from], graphIdOfNode[to]);
+            var back = depthOf[to] <= depthOf[from];
+            elements.Add(new { data = new { id = $"{a}->{b}", source = a, target = b }, classes = back ? "back" : "" });
+        }
+        return (elements, graphIdOfNode[root], depthOf.Count, truncated);
+    }
+
+    // 지금 코드 스택 중 그래프에 그려진 앞부분
+    private List<string> GraphPathOfStack()
+    {
+        var ids = new List<string>();
+        foreach (var id in stack)
+        {
+            if (!graphIdOfNode.TryGetValue(id, out var gid))
+            {
+                break;
+            }
+            ids.Add(gid);
+        }
+        return ids;
+    }
+
+    [JSInvokable]
+    public Task OnGraphNodeClick(string graphId) => InvokeAsync(() =>
+    {
+        if (!nodeOfGraphId.TryGetValue(graphId, out var id) || graph is null)
+        {
+            return;
+        }
+        if (graph.Nodes[id].Kind == NodeKind.External)
+        {
+            return;
+        }
+        var path = new List<string> { id };
+        while (graphParent.TryGetValue(path[^1], out var parent))
+        {
+            path.Add(parent);
+        }
+        path.Reverse();
+        SelectPath(path);
+        StateHasChanged();
+    });
+
+    private void Load()
+    {
+        var loaded = target is null ? null : Workspace.Get(target);
+        graph = loaded?.Graph;
+        index = loaded?.Index;
+        if (selectedEntry is not null && graph?.EntryPoints.FirstOrDefault(e => e.NodeId == selectedEntry.NodeId) is { } same)
+        {
+            selectedEntry = same;
+            stack = stack.Where(id => graph.Nodes.ContainsKey(id)).ToList();
+        }
+        else
+        {
+            selectedEntry = null;
+            stack = [];
+            expanded.Clear();
+        }
+    }
+
+    private void OnTargetChanged(ChangeEventArgs e)
+    {
+        target = e.Value?.ToString();
+        selectedEntry = null;
+        Load();
+    }
+
+    private bool adding;
+
+    private void OnTargetSaved((string Name, bool Analyze) saved)
+    {
+        adding = false;
+        target = saved.Name;
+        selectedEntry = null;
+        Load();
+        if (saved.Analyze)
+        {
+            Workspace.StartAnalysis(saved.Name);
+        }
+    }
+
+    private void Analyze()
+    {
+        if (target is not null)
+        {
+            Workspace.StartAnalysis(target);
+        }
+    }
+
+    private IEnumerable<EntryPoint> FilteredEntries()
+    {
+        var q = entryFilter.Trim();
+        return graph!.EntryPoints.Where(e => q.Length == 0
+            || e.Label.Contains(q, StringComparison.OrdinalIgnoreCase)
+            || e.Group.Contains(q, StringComparison.OrdinalIgnoreCase)
+            || graph.Nodes[e.NodeId].Name.Contains(q, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void SelectEntry(EntryPoint e)
+    {
+        selectedEntry = e;
+        expanded.Clear();
+        expanded.Add(e.NodeId);
+        stack = [e.NodeId];
+        openLine = null;
+    }
+
+    // ---- 트리 ----
+
+    private static string Key(IReadOnlyList<string> path) => string.Join('>', path);
+
+    private bool Visible(TraceNode n) => showExternal || n.Kind != NodeKind.External;
+
+    private RenderFragment RenderNode(List<string> path, TraceEdge? via) => __builder =>
+    {
+        var id = path[^1];
+        var node = graph!.Nodes[id];
+        var key = Key(path);
+        var recursive = path.Take(path.Count - 1).Contains(id);
+        var children = recursive ? [] : index!.ChildrenOf(id).Where(c => Visible(graph.Nodes[c.To])).ToList();
+        var isOpen = expanded.Contains(key);
+        var selected = Key(stack) == key;
+        <div class="node">
+            <div class="row @(selected ? "selected" : "") @KindClass(node)" @onclick="() => SelectPath(path)">
+                @if (children.Count > 0)
+                {
+                    <span class="twisty" @onclick="() => Toggle(key)" @onclick:stopPropagation="true">@(isOpen ? "▾" : "▸")</span>
+                }
+                else
+                {
+                    <span class="twisty none"></span>
+                }
+                <span class="name">@ShortName(node.Name)</span>
+                @if (recursive)
+                {
+                    <span class="badge">↺ 재귀</span>
+                }
+                @if (node.Stop is StopReason.Hidden)
+                {
+                    <span class="badge">숨김</span>
+                }
+                @if (node.Stop is StopReason.DepthLimit or StopReason.NodeLimit)
+                {
+                    <span class="badge warn">제한</span>
+                }
+                @if (via is not null)
+                {
+                    <span class="site">:@string.Join(",", via.CallSites.Select(s => s.Line))</span>
+                }
+            </div>
+            @if (isOpen && children.Count > 0)
+            {
+                <div class="children">
+                    @foreach (var c in children)
+                    {
+                        @RenderNode([.. path, c.To], c)
+                    }
+                </div>
+            }
+        </div>
+    };
+
+    private void Toggle(string key)
+    {
+        if (!expanded.Remove(key))
+        {
+            expanded.Add(key);
+        }
+    }
+
+    private void SelectPath(List<string> path)
+    {
+        stack = [.. path];
+        openLine = null;
+        for (var i = 1; i <= path.Count; i++)
+        {
+            expanded.Add(Key(path.Take(i).ToList()));
+        }
+    }
+
+    private void ExpandAll()
+    {
+        if (selectedEntry is null)
+        {
+            return;
+        }
+        // 재귀와 공유 노드 때문에 경로가 폭발하지 않게 4단계까지만
+        void Walk(List<string> path)
+        {
+            expanded.Add(Key(path));
+            if (path.Count >= 5)
+            {
+                return;
+            }
+            foreach (var c in index!.ChildrenOf(path[^1]))
+            {
+                if (!path.Contains(c.To) && Visible(graph!.Nodes[c.To]))
+                {
+                    Walk([.. path, c.To]);
+                }
+            }
+        }
+        Walk([selectedEntry.NodeId]);
+    }
+
+    private void CollapseAll()
+    {
+        expanded.Clear();
+        if (selectedEntry is not null)
+        {
+            expanded.Add(selectedEntry.NodeId);
+        }
+    }
+
+    // ---- 코드 스택 ----
+
+    private HashSet<int> CallLines(string from, string to) =>
+        index!.ChildrenOf(from).Where(e => e.To == to).SelectMany(e => e.CallSites).Select(s => s.Line).ToHashSet();
+
+    private Dictionary<int, List<string>> CallsByLine(string id)
+    {
+        var result = new Dictionary<int, List<string>>();
+        foreach (var e in index!.ChildrenOf(id))
+        {
+            if (!Visible(graph!.Nodes[e.To]))
+            {
+                continue;
+            }
+            foreach (var s in e.CallSites)
+            {
+                if (!result.TryGetValue(s.Line, out var list))
+                {
+                    result[s.Line] = list = [];
+                }
+                if (!list.Contains(e.To))
+                {
+                    list.Add(e.To);
+                }
+            }
+        }
+        return result;
+    }
+
+    private void ToggleLine(int frame, int line, bool hasCalls)
+    {
+        if (!hasCalls)
+        {
+            return;
+        }
+        // 호출이 하나뿐이면 바로 펼친다
+        var calls = CallsByLine(stack[frame])[line];
+        var internalCalls = calls.Where(c => graph!.Nodes[c].Kind != NodeKind.External).ToList();
+        if (internalCalls.Count == 1 && calls.Count == 1)
+        {
+            PushFrame(frame, internalCalls[0]);
+            return;
+        }
+        openLine = openLine == (frame, line) ? null : (frame, line);
+    }
+
+    private void PushFrame(int frame, string callee)
+    {
+        stack = [.. stack.Take(frame + 1), callee];
+        openLine = null;
+        SelectPath(stack);
+    }
+
+    private void TruncateStack(int count)
+    {
+        stack = stack.Take(Math.Max(1, count)).ToList();
+        openLine = null;
+    }
+
+    // ---- 표시 ----
+
+    private static string ShortName(string name)
+    {
+        // Pipeline::MessageProducer::PushMsg -> MessageProducer::PushMsg
+        var parts = name.Split("::");
+        return parts.Length <= 2 ? name : string.Join("::", parts[^2..]);
+    }
+
+    private static string KindClass(TraceNode n) => n.Kind == NodeKind.External ? "external"
+        : n.Stop == StopReason.Hidden ? "hidden" : "";
+
+    private static string StopText(StopReason r) => r switch
+    {
+        StopReason.Hidden => "설정(hideCallees)으로 숨긴 함수라 안쪽 호출은 따라가지 않았습니다.",
+        StopReason.DepthLimit => "깊이 제한에 걸려 안쪽 호출은 따라가지 않았습니다.",
+        StopReason.NodeLimit => "전체 함수 수 제한에 걸려 안쪽 호출은 따라가지 않았습니다.",
+        StopReason.NoDefinition => "정의(본문)를 찾지 못했습니다. 가상 함수·인터페이스라면 실제 구현은 따로 찾아야 합니다.",
+        StopReason.Failed => "clangd 조회가 실패했습니다.",
+        _ => "",
+    };
+}
