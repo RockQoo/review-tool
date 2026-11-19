@@ -5,6 +5,7 @@ using ReviewTool.Cpp;
 //   review-tool analyze <targets/이름.json> [--data <폴더>]
 //   review-tool show    <targets/이름.json> [--data <폴더>]   저장된 결과 요약
 //   review-tool check   <targets/이름.json> [--data <폴더>] [--strict]   점검 규칙(checks). --strict 면 확실도 높음이 있을 때 종료 코드 3
+//   review-tool report  <targets/이름.json> [--entry 이름]... [--source] [--abs-paths] [--out 파일]   공유 보고서(Markdown). 기본은 소스 본문·절대 경로 뺌
 //   review-tool init    <분석할 폴더> [--name 이름] [--force]   폴더를 보고 targets/<이름>.json 을 만든다
 //   review-tool mcp     [--targets <폴더>] [--data <폴더>]      MCP 서버(stdio). Claude Code·Codex 에서 분석 결과 조회
 return await CliMain.RunAsync(args);
@@ -21,10 +22,11 @@ internal static class CliMain
         {
             return await RunMcpAsync(args);
         }
-        if (args.Length < 2 || args[0] is not ("analyze" or "show" or "probe" or "check"))
+        if (args.Length < 2 || args[0] is not ("analyze" or "show" or "probe" or "check" or "report"))
         {
             Console.Error.WriteLine("사용법: review-tool init <폴더> [--name 이름] [--force]");
             Console.Error.WriteLine("        review-tool analyze|show|check <targets/이름.json> [--data <폴더>] [--strict]");
+            Console.Error.WriteLine("        review-tool report <targets/이름.json> [--entry 이름]... [--source] [--abs-paths] [--out 파일]");
             return 2;
         }
 
@@ -35,6 +37,49 @@ internal static class CliMain
         if (args[0] == "probe")
         {
             return await Probe.RunAsync(config, paths, args);
+        }
+
+        if (args[0] == "report")
+        {
+            var loaded = TraceStore.TryLoad(paths.TraceFile);
+            if (loaded is null)
+            {
+                Console.Error.WriteLine($"저장된 결과가 없음: {paths.TraceFile}");
+                return 1;
+            }
+            var index = new TraceIndex(loaded);
+            var options = new ShareReport.Options
+            {
+                IncludeSource = args.Contains("--source"),
+                IncludeAbsolutePaths = args.Contains("--abs-paths"),
+            };
+            for (var i = 0; i + 1 < args.Length; i++)
+            {
+                if (args[i] != "--entry")
+                {
+                    continue;
+                }
+                var wanted = args[i + 1];
+                var found = loaded.EntryPoints.Where(e => e.Label == wanted || e.NodeId == wanted).Select(e => e.NodeId).Distinct().ToList();
+                if (found.Count == 0)
+                {
+                    Console.Error.WriteLine($"진입점을 찾지 못함: {wanted}");
+                    return 1;
+                }
+                options.EntryNodeIds.AddRange(found);
+            }
+            var report = Checks.Run(config.Checks, loaded, index, Checks.ReadFrom(config.Root));
+            var text = ShareReport.Build(loaded, index, options, report);
+            if (Option(args, "--out") is { } outFile)
+            {
+                File.WriteAllText(outFile, text);
+                Console.WriteLine($"저장: {outFile} ({text.Length}자)");
+            }
+            else
+            {
+                Console.WriteLine(text);
+            }
+            return 0;
         }
 
         if (args[0] == "check")

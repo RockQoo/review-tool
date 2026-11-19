@@ -78,6 +78,9 @@
                 <button class="link icon-btn" title="기준 분석(수정 전)과 지금 분석의 구조 비교" @onclick="ToggleCompare">
                     <span class="ico" style="--icon: url('lib/lucide/git-compare.svg')"></span> 비교
                 </button>
+                <button class="link icon-btn" title="고른 진입점(또는 전체)을 Markdown 보고서로. 소스 본문·절대 경로 빼기 가능" @onclick="() => showReport = !showReport">
+                    <span class="ico" style="--icon: url('lib/lucide/file-text.svg')"></span> 보고서
+                </button>
                 @graph.AnalyzedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm") 분석 ·
                 진입점 @graph.EntryPoints.Count · 함수 @graph.Nodes.Count · 호출 @graph.Edges.Count
                 @if (graph.Diagnostics.Count > 0)
@@ -122,6 +125,11 @@
                 </ul>
             }
         </section>
+    }
+
+    @if (showReport && graph is not null && index is not null && target is not null && !adding)
+    {
+        <ReportPanel Target="@target" Graph="graph" Index="index" EntryNodeId="@selectedEntry?.NodeId" OnClose="() => showReport = false" />
     }
 
     @if (showCompare && graph is not null && target is not null)
@@ -916,6 +924,7 @@
     // ---- 전후 비교 ----
 
     private bool showCompare;
+    private bool showReport;
     private IReadOnlyList<SnapshotStore.Snapshot> snapshots = [];
     private string baselineId = "";
     private SnapshotComparer.CompareResult? comparison;

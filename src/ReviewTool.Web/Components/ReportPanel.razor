@@ -1,0 +1,115 @@
+@using ReviewTool.Core
+@using ReviewTool.Web.Services
+@inject TraceWorkspace Workspace
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+@* 공유 보고서: 고른 진입점(또는 전체)을 Markdown 한 장으로. 기본은 소스 본문·절대 경로를 뺀다(회사 코드 공유 대비). *@
+<section class="diagnostics compare report">
+    <div class="compare-bar">
+        <b>공유 보고서</b>
+        <label><input type="radio" name="report-scope" checked="@(!all)" disabled="@(EntryNodeId is null)" @onchange="() => all = false" /> 고른 진입점</label>
+        <label><input type="radio" name="report-scope" checked="@all" @onchange="() => all = true" /> 전체 진입점</label>
+        <span class="sep">|</span>
+        <label><input type="checkbox" @bind="options.Tree" /> 호출 트리</label>
+        <label><input type="checkbox" @bind="options.Journey" /> 패킷 여정</label>
+        <label><input type="checkbox" @bind="options.Summary" /> 흐름 요약</label>
+        <label><input type="checkbox" @bind="options.Checks" /> 점검</label>
+        <span class="sep">|</span>
+        <label title="진입점 함수 코드와 흐름 요약·점검 근거의 줄 텍스트"><input type="checkbox" @bind="options.IncludeSource" /> 소스 본문 포함</label>
+        <label title="분석 폴더 등 내 PC 경로"><input type="checkbox" @bind="options.IncludeAbsolutePaths" /> 절대 경로 포함</label>
+        <button class="link" @onclick="Build">만들기</button>
+        <button class="link close" @onclick="() => OnClose.InvokeAsync()">✕ 닫기</button>
+    </div>
+    @if (options.IncludeSource)
+    {
+        <p class="warn-line">⚠ 소스 본문을 넣으면 코드가 보고서에 그대로 들어갑니다. 회사 코드라면 공유 범위를 먼저 확인하세요.</p>
+    }
+    @if (error is not null)
+    {
+        <p class="warn-line">@error</p>
+    }
+    @if (text is not null)
+    {
+        <div class="report-actions">
+            <button class="link icon-btn" @onclick="Copy"><span class="ico" style="--icon: url('lib/lucide/clipboard-copy.svg')"></span> 복사</button>
+            <button class="link icon-btn" @onclick="Download"><span class="ico" style="--icon: url('lib/lucide/file-text.svg')"></span> 내려받기 (.md)</button>
+            <span class="hint-line">@text.Length.ToString("N0")자 · 진입점 @(entryCount)개@(note is null ? "" : " · " + note)</span>
+        </div>
+        <pre class="report-text">@text</pre>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string Target { get; set; } = "";
+    [Parameter, EditorRequired] public TraceGraph Graph { get; set; } = default!;
+    [Parameter, EditorRequired] public TraceIndex Index { get; set; } = default!;
+    [Parameter] public string? EntryNodeId { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private readonly ShareReport.Options options = new();
+    private bool all;
+    private string? text;
+    private string? error;
+    private string? note;
+    private int entryCount;
+    private IJSObjectReference? module;
+
+    protected override void OnParametersSet()
+    {
+        if (EntryNodeId is null)
+        {
+            all = true;
+        }
+    }
+
+    private void Build()
+    {
+        options.EntryNodeIds = all || EntryNodeId is null ? [] : [EntryNodeId];
+        Checks.Report? checks = null;
+        error = null;
+        if (options.Checks)
+        {
+            try
+            {
+                var config = Workspace.LoadConfig(Target);
+                checks = Checks.Run(config.Checks, Graph, Index, Checks.ReadFrom(config.Root));
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or System.Text.Json.JsonException or UnauthorizedAccessException)
+            {
+                error = $"설정을 읽지 못해 점검은 뺐습니다: {ex.Message}";
+            }
+        }
+        text = ShareReport.Build(Graph, Index, options, checks);
+        entryCount = options.EntryNodeIds.Count == 0 ? Math.Min(Graph.EntryPoints.Count, options.MaxEntries) : 1;
+        note = null;
+    }
+
+    private async Task<IJSObjectReference> Module() => module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/graph.js");
+
+    private async Task Copy()
+    {
+        note = await (await Module()).InvokeAsync<bool>("copyText", text) ? "복사했습니다" : "복사하지 못했습니다(브라우저 권한)";
+    }
+
+    private async Task Download()
+    {
+        var name = $"{Target}-report-{DateTime.Now:yyyyMMdd-HHmm}.md";
+        await (await Module()).InvokeVoidAsync("downloadText", name, text);
+        note = $"내려받음: {name}";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (module is not null)
+        {
+            try
+            {
+                await module.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+    }
+}

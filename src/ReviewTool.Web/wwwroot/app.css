@@ -436,3 +436,12 @@ select, input.search {
 .badge.cert-medium { color: var(--warn); border-color: var(--warn); }
 .badge.cert-low { border-style: dotted; }
 .line.flag { box-shadow: inset 3px 0 0 var(--warn); background: var(--call); }
+
+/* 5단계: 공유 보고서 */
+.report { display: flex; flex-direction: column; }
+.report .sep { color: var(--border); }
+.report .warn-line { color: var(--warn); font-size: 12px; margin: 0 0 4px; }
+.report-actions { display: flex; gap: 12px; align-items: center; margin: 2px 0 4px; font-size: 12px; }
+.report-actions .hint-line { color: var(--muted); }
+.report-text { margin: 0; padding: 8px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; font-family: var(--mono);
+               font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; min-height: 0; flex: 1; }

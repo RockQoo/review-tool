@@ -181,3 +181,15 @@ export async function copyText(text) {
         return ok;
     }
 }
+
+// 공유 보고서 내려받기(브라우저 다운로드). 서버에 파일을 쓰지 않는다.
+export function downloadText(name, text) {
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
