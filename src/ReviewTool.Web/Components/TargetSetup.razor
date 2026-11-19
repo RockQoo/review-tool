@@ -165,9 +165,10 @@
         }
         var config = suggestion.Config;
         config.EntryPoints = suggestion.Presets.Where(p => p.Enabled).Select(p => p.Preset.ToRule()).ToList();
-        if (config.EntryPoints.Count == 0)
+        // 규칙이 없으면 분석해도 빈 결과라 "저장하고 분석"만 막는다. 저장해 두고 json 에 규칙을 직접 적을 수 있게.
+        if (config.EntryPoints.Count == 0 && analyze)
         {
-            error = "진입점 규칙을 하나 이상 고르세요. 맞는 규칙이 없으면 저장 후 json 의 entryPoints 에 직접 적어야 합니다.";
+            error = "진입점 규칙이 없어 분석할 수 없습니다. '저장만' 한 뒤 json 의 entryPoints 에 정규식을 적으세요.";
             return;
         }
         try

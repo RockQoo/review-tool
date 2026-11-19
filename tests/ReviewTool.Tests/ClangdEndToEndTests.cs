@@ -76,4 +76,51 @@ public class ClangdEndToEndTests
             Directory.Delete(data, recursive: true);
         }
     }
+
+    // 깊이 제한에 걸린 함수도, 나중 진입점에서 더 얕게 닿으면 아래를 마저 따라가야 한다(처리 순서와 무관한 결과).
+    [Fact]
+    public async Task 공유_함수는_더_얕게_닿으면_다시_펼친다()
+    {
+        string clangd;
+        try
+        {
+            clangd = ClangdSession.FindClangd("");
+        }
+        catch (FileNotFoundException)
+        {
+            return;
+        }
+
+        var data = Directory.CreateTempSubdirectory("rt-e2e").FullName;
+        try
+        {
+            var config = new TargetConfig
+            {
+                Name = "mini",
+                Root = Path.Combine(AppContext.BaseDirectory, "Fixtures", "mini"),
+                // HandleMove(0) → World::Move(1) → Broadcast(2, 제한). 그 다음 World::Move 자체가 진입점(0).
+                EntryPoints =
+                [
+                    new EntryPointRule { Name = "Register", Pattern = @"Register\(\s*&(?<class>\w+)::(?<method>\w+)\s*\)" },
+                    new EntryPointRule { Name = "World", Pattern = @"^void (?<class>World)::(?<method>Move)\(", Files = ["**/*.cpp"] },
+                ],
+                MaxDepth = 2,
+                Cpp = new CppOptions
+                {
+                    Clangd = clangd, CompileFrom = "flags", Standard = "c++20", ExtraIncludeDirs = ["Src"],
+                    DetectMsvc = false, IndexTimeoutSeconds = 120,
+                },
+            };
+
+            var graph = await new CppTraceAnalyzer().AnalyzeAsync(config, new WorkPaths(data, "mini"), null, CancellationToken.None);
+
+            Assert.Equal(2, graph.EntryPoints.Count);
+            var broadcast = graph.Nodes.Values.Single(n => n.Name == "World::Broadcast");
+            Assert.NotEqual(StopReason.DepthLimit, broadcast.Stop);
+        }
+        finally
+        {
+            Directory.Delete(data, recursive: true);
+        }
+    }
 }

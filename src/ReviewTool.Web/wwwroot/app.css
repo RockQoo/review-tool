@@ -210,6 +210,7 @@ select, input.search {
 }
 
 .row:hover { background: var(--accent-soft); }
+.row:focus-visible, .line.call:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .row.selected { background: var(--accent); color: #fff; }
 .row.external { color: var(--ext); }
 .row.hidden { color: var(--ext); font-style: italic; }

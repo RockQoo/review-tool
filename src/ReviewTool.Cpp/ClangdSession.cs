@@ -79,9 +79,18 @@ public sealed class ClangdSession : IAsyncDisposable
                 },
             },
         };
-        await client.RequestAsync("initialize", init, cancellationToken, TimeSpan.FromSeconds(30));
-        await client.NotifyAsync("initialized", new JsonObject(), cancellationToken);
-        return session;
+        try
+        {
+            await client.RequestAsync("initialize", init, cancellationToken, TimeSpan.FromSeconds(30));
+            await client.NotifyAsync("initialized", new JsonObject(), cancellationToken);
+            return session;
+        }
+        catch
+        {
+            // 호출자의 await using 은 반환이 성공해야 성립하므로 여기서 clangd 를 직접 끝낸다
+            await session.DisposeAsync();
+            throw;
+        }
     }
 
     private void OnNotification(string method, JsonNode? parameters)

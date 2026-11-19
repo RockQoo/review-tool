@@ -143,7 +143,11 @@
                         <button class="link" @onclick="ExpandAll">모두 펼치기</button>
                         <button class="link" @onclick="CollapseAll">접기</button>
                     </div>
-                    <div class="tree-body">
+                    @if (expandNote is not null)
+                    {
+                        <div class="note">@expandNote</div>
+                    }
+                    <div class="tree-body" role="tree" aria-label="호출 트리">
                         @RenderNode([selectedEntry.NodeId], null)
                     </div>
                 }
@@ -189,7 +193,9 @@
                                     var isNext = nextCallLines.Contains(lineNo);
                                     var isOpen = openLine == (frameIndex, lineNo);
                                     <div class="line @(hasCalls ? "call" : "") @(isNext ? "next" : "") @(isOpen ? "open" : "")"
-                                         @onclick="() => ToggleLine(frameIndex, lineNo, hasCalls)">
+                                         tabindex="@(hasCalls ? "0" : null)" role="@(hasCalls ? "button" : null)"
+                                         @onclick="() => ToggleLine(frameIndex, lineNo, hasCalls)"
+                                         @onkeydown="e => OnLineKey(e, frameIndex, lineNo, hasCalls)">
                                         <span class="ln">@lineNo</span><span class="src">@lines[l]</span>
                                     </div>
                                     @if (isOpen && lineCalls is not null)
@@ -284,6 +290,7 @@
     private int graphCount;
     private bool graphTruncated;
     private string? renderedGraphKey;
+    private bool graphInstanceAlive;
     private string? highlightedKey;
     private IJSObjectReference? graphModule;
     private DotNetObjectReference<Home>? selfRef;
@@ -312,25 +319,31 @@
             return;
         }
 
-        if (viewMode == "tree" || selectedEntry is null || graph is null)
+        // 그래프 칸(graph-canvas)이 지금 화면에 있는지. 없으면 JS 쪽 인스턴스를 반드시 정리한다
+        // (대상 추가 화면으로 갔다 오면 칸이 새로 만들어지므로 다시 그려야 한다).
+        var canvasVisible = !adding && target is not null && viewMode != "tree" && selectedEntry is not null &&
+                            graph is not null && index is not null;
+        if (!canvasVisible)
         {
-            if (renderedGraphKey is not null)
+            if (graphInstanceAlive)
             {
                 await graphModule.InvokeVoidAsync("destroy", GraphElementId);
-                renderedGraphKey = null;
+                graphInstanceAlive = false;
             }
+            renderedGraphKey = null;
             return;
         }
 
-        var key = $"{graph.AnalyzedAt:O}|{selectedEntry.NodeId}|{showExternal}|{graphDepth}|{viewMode}";
-        var pathIds = GraphPathOfStack();
-        var pathKey = string.Join(',', pathIds);
+        var key = $"{graph!.AnalyzedAt:O}|{selectedEntry!.NodeId}|{showExternal}|{graphDepth}|{viewMode}";
         if (key != renderedGraphKey)
         {
+            // 매핑(g0, g1 …)은 BuildGraph 가 새로 만든다. 선택 경로는 그 뒤에 계산해야 맞는 노드에 붙는다.
             var (elements, rootId, count, truncated) = BuildGraph();
+            var pathIds = GraphPathOfStack();
             await graphModule.InvokeVoidAsync("render", GraphElementId, elements, rootId, pathIds, selfRef);
+            graphInstanceAlive = true;
             renderedGraphKey = key;
-            highlightedKey = pathKey;
+            highlightedKey = string.Join(',', pathIds);
             if (count != graphCount || truncated != graphTruncated)
             {
                 graphCount = count;
@@ -338,17 +351,22 @@
                 StateHasChanged();
             }
         }
-        else if (pathKey != highlightedKey)
+        else
         {
-            await graphModule.InvokeVoidAsync("highlight", GraphElementId, pathIds);
-            highlightedKey = pathKey;
+            var pathIds = GraphPathOfStack();
+            var pathKey = string.Join(',', pathIds);
+            if (pathKey != highlightedKey)
+            {
+                await graphModule.InvokeVoidAsync("highlight", GraphElementId, pathIds);
+                highlightedKey = pathKey;
+            }
         }
     }
 
     private async Task SetViewMode(string mode)
     {
         viewMode = mode;
-        renderedGraphKey = null;   // 칸 크기가 바뀌므로 다시 배치
+        renderedGraphKey = null;   // 칸 크기가 바뀌므로 다시 배치(인스턴스 정리는 graphInstanceAlive 로 따로 판단)
         if (graphModule is not null)
         {
             await graphModule.InvokeVoidAsync("setPref", "viewMode", mode);
@@ -590,10 +608,13 @@
         var isOpen = expanded.Contains(key);
         var selected = Key(stack) == key;
         <div class="node">
-            <div class="row @(selected ? "selected" : "") @KindClass(node)" @onclick="() => SelectPath(path)">
+            <div class="row @(selected ? "selected" : "") @KindClass(node)" @onclick="() => SelectPath(path)"
+                 tabindex="0" role="treeitem" aria-selected="@(selected ? "true" : "false")"
+                 aria-expanded="@(children.Count > 0 ? (isOpen ? "true" : "false") : null)"
+                 @onkeydown="e => OnRowKey(e, path, key, children.Count > 0)">
                 @if (children.Count > 0)
                 {
-                    <span class="twisty" @onclick="() => Toggle(key)" @onclick:stopPropagation="true">@(isOpen ? "▾" : "▸")</span>
+                    <span class="twisty" aria-hidden="true" @onclick="() => Toggle(key)" @onclick:stopPropagation="true">@(isOpen ? "▾" : "▸")</span>
                 }
                 else
                 {
@@ -653,23 +674,59 @@
         {
             return;
         }
-        // 재귀와 공유 노드 때문에 경로가 폭발하지 않게 4단계까지만
-        void Walk(List<string> path)
+        // 트리는 "경로" 단위라 공유 함수가 많으면 줄 수가 곱으로 늘어난다. 얕은 쪽부터 펼치고 줄 수 예산에서 멈춘다.
+        const int RowBudget = 500;
+        var rows = 1;
+        expandNote = null;
+        var queue = new Queue<List<string>>();
+        queue.Enqueue([selectedEntry.NodeId]);
+        while (queue.Count > 0)
         {
-            expanded.Add(Key(path));
-            if (path.Count >= 5)
+            var path = queue.Dequeue();
+            var children = index!.ChildrenOf(path[^1])
+                .Where(c => !path.Contains(c.To) && Visible(graph!.Nodes[c.To])).ToList();
+            if (children.Count == 0)
             {
-                return;
+                continue;
             }
-            foreach (var c in index!.ChildrenOf(path[^1]))
+            if (rows + children.Count > RowBudget)
             {
-                if (!path.Contains(c.To) && Visible(graph!.Nodes[c.To]))
-                {
-                    Walk([.. path, c.To]);
-                }
+                expandNote = $"줄이 너무 많아 {RowBudget}줄에서 멈췄습니다. 필요한 곳은 ▸ 로 더 펼치세요.";
+                break;
+            }
+            expanded.Add(Key(path));
+            rows += children.Count;
+            foreach (var c in children)
+            {
+                queue.Enqueue([.. path, c.To]);
             }
         }
-        Walk([selectedEntry.NodeId]);
+    }
+
+    private string? expandNote;
+
+    private void OnLineKey(KeyboardEventArgs e, int frame, int line, bool hasCalls)
+    {
+        if (e.Key is "Enter" or " ")
+        {
+            ToggleLine(frame, line, hasCalls);
+        }
+    }
+
+    private void OnRowKey(KeyboardEventArgs e, List<string> path, string key, bool hasChildren)
+    {
+        switch (e.Key)
+        {
+            case "Enter" or " ":
+                SelectPath(path);
+                break;
+            case "ArrowRight" when hasChildren:
+                expanded.Add(key);
+                break;
+            case "ArrowLeft":
+                expanded.Remove(key);
+                break;
+        }
     }
 
     private void CollapseAll()

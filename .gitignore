@@ -11,3 +11,4 @@ code-review/
 QA-LOG.md
 # 분석 대상 설정: 내 PC 경로가 들어 있는 로컬 파일 (만드는 법은 targets/README.md)
 targets/*.json
+review.md

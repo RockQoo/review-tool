@@ -41,9 +41,9 @@ public static partial class CppTargetDetector
         };
 
         // 1) 컴파일 옵션: vcxproj > compile_flags.txt > 추측
-        var projects = Directory.EnumerateFiles(root, "*.vcxproj", SearchOption.AllDirectories)
+        var projects = SourceFiles.Enumerate(root, CompileDatabase.IsVcxproj)
             .Select(p => Path.GetRelativePath(root, p).Replace('\\', '/'))
-            .Where(p => !CompileDatabase.IsBuildOutput(p) && !IsThirdParty(p))
+            .Where(p => !IsThirdParty(p))
             .ToList();
         if (projects.Count > 0)
         {
@@ -73,13 +73,9 @@ public static partial class CppTargetDetector
         }
 
         // 2) 서드파티 폴더는 범위에서 뺀다(범위 밖 함수는 "외부"로 보이고 들어가지 않는다)
-        foreach (var dir in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories))
+        foreach (var dir in SourceFiles.Directories(root, maxDepth: 3))
         {
             var rel = Path.GetRelativePath(root, dir).Replace('\\', '/');
-            if (rel.Count(c => c == '/') > 2 || CompileDatabase.IsBuildOutput(rel))
-            {
-                continue;
-            }
             if (ThirdPartyNames.Contains(Path.GetFileName(dir).ToLowerInvariant()) &&
                 !config.Exclude.Any(e => rel.StartsWith(e.TrimEnd('*', '/'), StringComparison.OrdinalIgnoreCase)))
             {
@@ -88,22 +84,24 @@ public static partial class CppTargetDetector
         }
 
         var filter = GlobMatcher.Build(config.Include, config.Exclude);
-        var sourceCount = CompileDatabase.EnumerateSources(root, filter).Count();
+        var sourceCount = CompileDatabase.EnumerateSources(root, filter, config.Exclude).Count();
         if (sourceCount == 0)
         {
             notes.Add("분석 범위에 .cpp 가 없습니다. include/exclude 를 확인하세요.");
         }
 
         // 3) 진입점 규칙: 실제로 걸리는 것을 센다
+        // 규칙 네 개를 한 번의 파일 순회로 센다
+        var rules = Presets.Select(p => p.ToRule()).ToList();
+        var probe = new TargetConfig { Root = root, Exclude = config.Exclude, EntryPoints = rules };
+        var all = CppTraceAnalyzer.FindEntryPoints(probe, filter);
         var detected = new List<DetectedPreset>();
-        foreach (var preset in Presets)
+        for (var i = 0; i < Presets.Length; i++)
         {
-            var rule = preset.ToRule();
-            var probe = new TargetConfig { Root = root, EntryPoints = [rule] };
-            var found = CppTraceAnalyzer.FindEntryPoints(probe, filter);
+            var found = all.Where(f => ReferenceEquals(f.Rule, rules[i])).ToList();
             var samples = found.Select(f => f.ClassName is null ? f.Method : $"{f.ClassName}::{f.Method}")
                 .Distinct().Take(4).ToList();
-            detected.Add(new DetectedPreset(preset, found.Select(f => (f.ClassName, f.Method)).Distinct().Count(), samples));
+            detected.Add(new DetectedPreset(Presets[i], found.Select(f => (f.ClassName, f.Method)).Distinct().Count(), samples));
         }
         var specific = detected.Take(3).Where(d => d.Matches > 0).ToList();
         var chosen = specific.Count > 0 ? specific : detected.Skip(3).Where(d => d.Matches > 0).ToList();
@@ -152,11 +150,11 @@ public static partial class CppTargetDetector
     private static List<string> GuessIncludeDirs(string root)
     {
         var dirs = new List<string> { "." };
-        foreach (var dir in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories))
+        foreach (var dir in SourceFiles.Directories(root, maxDepth: 6))
         {
             var rel = Path.GetRelativePath(root, dir).Replace('\\', '/');
             var leaf = Path.GetFileName(dir).ToLowerInvariant();
-            if (CompileDatabase.IsBuildOutput(rel) || IsThirdParty(rel) || leaf is not ("src" or "include" or "source"))
+            if (IsThirdParty(rel) || leaf is not ("src" or "include" or "source"))
             {
                 continue;
             }

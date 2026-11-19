@@ -102,40 +102,67 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
     public sealed record EntryCandidate(EntryPointRule Rule, string File, string RelativeFile, int Line, int Column,
                                           string Method, string? ClassName, string? Label);
 
+    // 파일을 한 번만 읽고 모든 규칙을 적용한다. 결과는 규칙 순서대로.
     internal static List<EntryCandidate> FindEntryPoints(TargetConfig config, Func<string, bool> filter)
     {
-        var result = new List<EntryCandidate>();
-        foreach (var rule in config.EntryPoints)
+        var rules = config.EntryPoints
+            .Select(rule => (Rule: rule, Regex: new Regex(rule.Pattern, RegexOptions.Multiline),
+                             Files: rule.Files.Count > 0 ? GlobMatcher.Build(rule.Files, []) : (_ => true)))
+            .ToList();
+        var perRule = rules.Select(_ => new List<EntryCandidate>()).ToList();
+        foreach (var file in SourceFiles.Enumerate(config.Root, SourceFiles.IsCode, config.Exclude))
         {
-            var regex = new Regex(rule.Pattern, RegexOptions.Multiline);
-            var ruleFilter = rule.Files.Count > 0 ? GlobMatcher.Build(rule.Files, []) : (_ => true);
-            foreach (var file in EnumerateCode(config.Root))
+            var rel = Path.GetRelativePath(config.Root, file).Replace('\\', '/');
+            if (!filter(rel))
             {
-                var rel = Path.GetRelativePath(config.Root, file).Replace('\\', '/');
-                if (!filter(rel) || !ruleFilter(rel))
+                continue;
+            }
+            string? text = null;
+            int[]? lineStarts = null;
+            for (var r = 0; r < rules.Count; r++)
+            {
+                var (rule, regex, ruleFilter) = rules[r];
+                if (!ruleFilter(rel))
                 {
                     continue;
                 }
-                var text = File.ReadAllText(file);
+                text ??= File.ReadAllText(file);
                 foreach (Match m in regex.Matches(text))
                 {
                     var method = m.Groups["method"];
-                    if (!method.Success)
+                    if (!method.Success || IsInComment(text, m.Index))
                     {
                         continue;
                     }
-                    if (IsInComment(text, m.Index))
-                    {
-                        continue;
-                    }
-                    var (line, col) = ToLineColumn(text, method.Index);
-                    result.Add(new EntryCandidate(rule, file, rel, line, col, method.Value,
+                    lineStarts ??= LineStarts(text);
+                    var (line, col) = ToLineColumn(lineStarts, method.Index);
+                    perRule[r].Add(new EntryCandidate(rule, file, rel, line, col, method.Value,
                         m.Groups["class"].Success ? m.Groups["class"].Value : null,
                         m.Groups["label"].Success ? m.Groups["label"].Value : null));
                 }
             }
         }
-        return result;
+        return perRule.SelectMany(x => x).ToList();
+    }
+
+    internal static int[] LineStarts(string text)
+    {
+        var starts = new List<int> { 0 };
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '\n')
+            {
+                starts.Add(i + 1);
+            }
+        }
+        return [.. starts];
+    }
+
+    internal static (int Line, int Column) ToLineColumn(int[] lineStarts, int index)
+    {
+        var i = Array.BinarySearch(lineStarts, index);
+        var line = i >= 0 ? i : ~i - 1;
+        return (line + 1, index - lineStarts[line]);
     }
 
     // 주석 속 예시 코드(`Register(this, &X::Handle)` 같은)를 진입점으로 잡지 않기 위한 근사 판정:
@@ -148,34 +175,8 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
                before.TrimStart().StartsWith("/*", StringComparison.Ordinal);
     }
 
-    private static IEnumerable<string> EnumerateCode(string root)
-    {
-        foreach (var file in Directory.EnumerateFiles(root, "*.*", SearchOption.AllDirectories))
-        {
-            var ext = Path.GetExtension(file).ToLowerInvariant();
-            if (ext is ".cpp" or ".cc" or ".cxx" or ".h" or ".hpp" &&
-                !CompileDatabase.IsBuildOutput(Path.GetRelativePath(root, file)))
-            {
-                yield return file;
-            }
-        }
-    }
-
     // 1부터 세는 줄, 0부터 세는 열(UTF-16 코드 단위, LSP 기본과 같음)
-    internal static (int Line, int Column) ToLineColumn(string text, int index)
-    {
-        var line = 1;
-        var lineStart = 0;
-        for (var i = 0; i < index; i++)
-        {
-            if (text[i] == '\n')
-            {
-                line++;
-                lineStart = i + 1;
-            }
-        }
-        return (line, index - lineStart);
-    }
+    internal static (int Line, int Column) ToLineColumn(string text, int index) => ToLineColumn(LineStarts(text), index);
 
     // 패킷 핸들러는 두 번째 인자 타입이 패킷이라, 시그니처에서 C2ZMove 같은 이름을 뽑는다.
     private static string MakeLabel(EntryCandidate candidate, TraceNode node)

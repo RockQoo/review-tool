@@ -44,6 +44,12 @@ public sealed class TraceWorkspace(IConfiguration configuration, IWebHostEnviron
             graphs_.Remove(config.Name);
             indexes_.Remove(config.Name);
         }
+        // 같은 이름으로 덮어쓰면 이전 설정(다른 폴더일 수 있음)의 결과는 버린다. 색인 캐시는 clangd 가 알아서 갱신한다.
+        var trace = new WorkPaths(DataDirectory, config.Name).TraceFile;
+        if (File.Exists(trace))
+        {
+            File.Delete(trace);
+        }
         Changed?.Invoke();
         return path;
     }
@@ -101,17 +107,36 @@ public sealed class TraceWorkspace(IConfiguration configuration, IWebHostEnviron
             }
         }
         var graph = TraceStore.TryLoad(new WorkPaths(DataDirectory, name).TraceFile);
-        if (graph is null)
+        if (graph is null || !SameRoot(graph, name))
         {
             return null;
         }
         var index = new TraceIndex(graph);
         lock (lock_)
         {
+            // 읽는 사이에 분석이 끝나 새 결과가 들어왔으면 그것이 우선이다
+            if (graphs_.TryGetValue(name, out var newer))
+            {
+                return (newer, indexes_[name]);
+            }
             graphs_[name] = graph;
             indexes_[name] = index;
         }
         return (graph, index);
+    }
+
+    // 결과가 지금 설정과 같은 폴더를 분석한 것인지. 설정을 손으로 바꿨을 때 옛 결과를 보여 주지 않기 위해.
+    private bool SameRoot(TraceGraph graph, string name)
+    {
+        try
+        {
+            return string.Equals(Path.GetFullPath(graph.RootDirectory).TrimEnd('\\', '/'),
+                                 LoadConfig(name).Root.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or System.Text.Json.JsonException)
+        {
+            return false;
+        }
     }
 
     public bool StartAnalysis(string name)

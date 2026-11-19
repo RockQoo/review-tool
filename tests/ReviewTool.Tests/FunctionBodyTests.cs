@@ -50,6 +50,29 @@ public class FunctionBodyTests
         Assert.Equal(6, span.EndLine);
     }
 
+    [Theory]
+    [InlineData("PlayerInfo::SPtr PlayerManager::Get(const Network::SessionId clientSessionId) const", 26, "const Network::SessionId")]
+    [InlineData("void F(int a = 3, const char* name, std::vector<int, A> v)", 5, "int|const char*|std::vector<int, A>")]
+    [InlineData("void F(const int, Foo&)", 5, "const int|Foo&")]
+    [InlineData("void F()", 5, "")]
+    [InlineData("void F(void)", 5, "")]
+    public void 매개변수_타입만_뽑는다(string code, int nameCol, string expected)
+    {
+        var types = FunctionBody.ParameterTypes(L(code), 0, nameCol);
+        Assert.NotNull(types);
+        Assert.Equal(expected, string.Join('|', types));
+    }
+
+    [Fact]
+    public void 선언과_정의의_매개변수_이름이_달라도_같은_오버로드()
+    {
+        var decl = FunctionBody.ParameterTypes(L("    void Run(const Packet& p, // 받은 패킷\n             int retry = 0);"), 0, 9);
+        var def = FunctionBody.ParameterTypes(L("void A::Run(const Packet &packet, int count)\n{\n}"), 0, 8);
+        var other = FunctionBody.ParameterTypes(L("void A::Run(const Packet& packet)\n{\n}"), 0, 8);
+        Assert.Equal(decl, def);
+        Assert.NotEqual(decl, other);
+    }
+
     [Fact]
     public void 한_줄_인라인_정의()
     {

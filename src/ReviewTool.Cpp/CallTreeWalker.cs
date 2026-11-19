@@ -14,7 +14,10 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
 {
     private readonly Dictionary<string, JsonObject> items_ = [];
     private readonly Dictionary<string, string> idBySymbol_ = [];
-    private readonly HashSet<string> expanded_ = [];
+    // 펼친 노드와 그때의 깊이. 다른 진입점에서 더 얕게 닿으면 남은 깊이만큼 아래를 다시 따라간다
+    // (진입점 처리 순서에 따라 결과가 달라지지 않게).
+    private readonly Dictionary<string, int> expandedDepth_ = [];
+    private readonly Dictionary<string, List<string>> children_ = [];
     private readonly Dictionary<(string, string), TraceEdge> edges_ = [];
     private readonly Regex[] hide_ = config.HideCallees.Select(p => new Regex(p)).ToArray();
     private readonly Dictionary<string, string[]> fileCache_ = new(StringComparer.OrdinalIgnoreCase);
@@ -63,17 +66,29 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
             ct.ThrowIfCancellationRequested();
             var (id, depth) = queue.Dequeue();
             var node = graph.Nodes[id];
-            if (node.Stop is StopReason.External or StopReason.Hidden or StopReason.NoDefinition)
-            {
-                continue;
-            }
-            if (expanded_.Contains(id))
+            if (node.Stop is StopReason.External or StopReason.Hidden or StopReason.NoDefinition or StopReason.Failed)
             {
                 continue;
             }
             if (depth >= config.MaxDepth)
             {
-                node.Stop = StopReason.DepthLimit;   // 다른 진입점에서 더 얕게 닿으면 그때 펼친다
+                if (!expandedDepth_.ContainsKey(id))
+                {
+                    node.Stop = StopReason.DepthLimit;   // 다른 진입점에서 더 얕게 닿으면 그때 펼친다
+                }
+                continue;
+            }
+            if (expandedDepth_.TryGetValue(id, out var seenDepth))
+            {
+                // 이미 펼쳤다. 이번이 더 얕으면 아래쪽을 남은 깊이만큼 다시 따라간다(호출 목록은 이미 있음).
+                if (depth < seenDepth)
+                {
+                    expandedDepth_[id] = depth;
+                    foreach (var child in children_.GetValueOrDefault(id) ?? [])
+                    {
+                        queue.Enqueue((child, depth + 1));
+                    }
+                }
                 continue;
             }
             if (graph.Nodes.Count >= config.MaxNodes)
@@ -82,7 +97,7 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
                 NodeLimitHit = true;
                 continue;
             }
-            expanded_.Add(id);
+            expandedDepth_[id] = depth;
             node.Stop = null;
 
             JsonArray calls;
@@ -106,13 +121,25 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
                 .Select(c => (Call: c, First: FirstRange(c)))
                 .OrderBy(c => c.First.Line).ThenBy(c => c.First.Character)
                 .ToList();
+            var kids = children_[id] = [];
+            var skipped = 0;
             foreach (var (call, _) in ordered)
             {
                 if (call["to"] is not JsonObject to)
                 {
                     continue;
                 }
+                // 노드 상한은 새 노드를 실제로 만들 때 검사한다(이미 있는 함수로 가는 선은 그대로 잇는다)
+                if (!IsKnown(to) && graph.Nodes.Count >= config.MaxNodes)
+                {
+                    skipped++;
+                    continue;
+                }
                 var childId = await AddNodeAsync(to, ct);
+                if (!kids.Contains(childId))
+                {
+                    kids.Add(childId);
+                }
                 var edge = GetEdge(id, childId);
                 foreach (var range in call["fromRanges"]?.AsArray().OfType<JsonObject>() ?? [])
                 {
@@ -129,29 +156,58 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
                         edge.CallSites.Add(site);
                     }
                 }
-                if (!expanded_.Contains(childId))
-                {
-                    queue.Enqueue((childId, depth + 1));
-                }
+                queue.Enqueue((childId, depth + 1));
+            }
+            if (skipped > 0)
+            {
+                node.Stop = StopReason.NodeLimit;
+                NodeLimitHit = true;
+                Failures.Add($"노드 수 제한으로 {node.Name} 의 호출 {skipped}개를 생략함");
             }
         }
     }
 
+    private bool IsKnown(JsonObject item)
+    {
+        var symbol = item["data"]?.GetValue<string>();
+        if (symbol is not null && idBySymbol_.ContainsKey(symbol))
+        {
+            return true;
+        }
+        var path = PathUri.ToPath(item["uri"]!.GetValue<string>());
+        var qualified = item["detail"]?.GetValue<string>() is { Length: > 0 } d ? d : item["name"]!.GetValue<string>();
+        return !IsInside(path, out _) && graph.Nodes.ContainsKey($"ext:{qualified}");
+    }
+
     private async Task RelocateItemAsync(string id, (string Path, int Line0, int Col) def, CancellationToken ct)
     {
-        await session.OpenAsync(def.Path, ct);
+        var moved = await PrepareAtAsync(def.Path, def.Line0, def.Col, ct);
+        if (moved is null)
+        {
+            return;
+        }
+        // 정의 위치에서 다시 받은 심볼이 원래 것과 같아야 한다(다른 오버로드로 바뀌면 안 됨)
+        var original = items_[id]["data"]?.GetValue<string>();
+        var relocated = moved["data"]?.GetValue<string>();
+        if (original is not null && relocated is not null && original != relocated)
+        {
+            Failures.Add($"정의 위치의 심볼이 달라 옮기지 않음: {graph.Nodes[id].Name} ({def.Path}:{def.Line0 + 1})");
+            return;
+        }
+        moved["detail"] ??= items_[id]["detail"]?.DeepClone();
+        items_[id] = moved;
+    }
+
+    private async Task<JsonObject?> PrepareAtAsync(string path, int line0, int col, CancellationToken ct)
+    {
+        await session.OpenAsync(path, ct);
         try
         {
-            var moved = await session.PrepareCallHierarchyAsync(def.Path, def.Line0, def.Col, ct);
-            if (moved is not null)
-            {
-                moved["detail"] ??= items_[id]["detail"]?.DeepClone();
-                items_[id] = moved;
-            }
+            return await session.PrepareCallHierarchyAsync(path, line0, col, ct);
         }
         finally
         {
-            await session.CloseAsync(def.Path, ct);
+            await session.CloseAsync(path, ct);
         }
     }
 
@@ -217,7 +273,7 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
             if (!body.HasBody)
             {
                 // 선언 위치였다 → 색인에서 정의를 찾는다
-                var def = await FindDefinitionAsync(name, qualified, ct);
+                var def = await FindDefinitionAsync(name, qualified, (path, line0, col), ct);
                 if (def is not null && IsInside(def.Value.Path, out var defRel))
                 {
                     var defBody = FunctionBody.Find(ReadLines(def.Value.Path), def.Value.Line0, def.Value.Col);
@@ -257,7 +313,11 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
         return id;
     }
 
-    private async Task<(string Path, int Line0, int Col)?> FindDefinitionAsync(string name, string qualified, CancellationToken ct)
+    // 이름으로 색인을 찾으면 같은 이름의 오버로드·다른 클래스가 섞여 나온다. 범위가 맞는 후보가 하나면 그것을,
+    // 여럿이면 각 후보 위치에서 심볼 ID 를 받아 원래 함수(symbol)와 같은 것만 쓴다. 못 가르면 쓰지 않는다.
+    private async Task<(string Path, int Line0, int Col)?> FindDefinitionAsync(string name, string qualified,
+                                                                              (string Path, int Line0, int Col) declaration,
+                                                                              CancellationToken ct)
     {
         JsonArray symbols;
         try
@@ -270,22 +330,49 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
             return null;
         }
         var container = qualified.Contains("::") ? qualified[..qualified.LastIndexOf("::", StringComparison.Ordinal)] : "";
+        var candidates = new List<(string Path, int Line0, int Col)>();
         foreach (var s in symbols.OfType<JsonObject>())
         {
-            if (s["name"]?.GetValue<string>() != name)
-            {
-                continue;
-            }
-            var sc = s["containerName"]?.GetValue<string>() ?? "";
-            if (container.Length > 0 && !container.EndsWith(sc, StringComparison.Ordinal) && !sc.EndsWith(container, StringComparison.Ordinal))
+            if (s["name"]?.GetValue<string>() != name || !SameScope(container, s["containerName"]?.GetValue<string>() ?? ""))
             {
                 continue;
             }
             var loc = s["location"]!;
             var start = loc["range"]!["start"]!;
-            return (PathUri.ToPath(loc["uri"]!.GetValue<string>()), start["line"]!.GetValue<int>(), start["character"]!.GetValue<int>());
+            candidates.Add((PathUri.ToPath(loc["uri"]!.GetValue<string>()), start["line"]!.GetValue<int>(), start["character"]!.GetValue<int>()));
         }
+        if (candidates.Count <= 1)
+        {
+            return candidates.Count == 1 ? candidates[0] : null;
+        }
+        // 오버로드는 매개변수 목록(소스 텍스트)으로 가른다. clangd 에 파일을 열어 심볼 ID 로 확인하는 방법은 쓰지 않는다:
+        // 연 파일의 동적 색인이 헤더 인라인 함수의 호출 기록을 가려 outgoingCalls 가 비는 것을 실측했다.
+        var wanted = FunctionBody.ParameterTypes(ReadLines(declaration.Path), declaration.Line0, declaration.Col);
+        if (wanted is not null)
+        {
+            var matches = candidates
+                .Where(c => IsInside(c.Path, out _) &&
+                            FunctionBody.ParameterTypes(ReadLines(c.Path), c.Line0, c.Col) is { } p && p.SequenceEqual(wanted))
+                .ToList();
+            if (matches.Count == 1)
+            {
+                return matches[0];
+            }
+        }
+        Failures.Add($"정의 후보가 {candidates.Count}개라 고르지 못함(오버로드?): {qualified}");
         return null;
+    }
+
+    // 범위 이름 비교. "A::B" 와 "B" 는 같은 것으로 보지만, 빈 범위는 빈 범위끼리만 같다.
+    internal static bool SameScope(string expected, string actual)
+    {
+        if (expected.Length == 0 || actual.Length == 0)
+        {
+            return expected.Length == actual.Length;
+        }
+        return expected == actual ||
+               expected.EndsWith("::" + actual, StringComparison.Ordinal) ||
+               actual.EndsWith("::" + expected, StringComparison.Ordinal);
     }
 
     private bool IsInside(string path, out string rel)

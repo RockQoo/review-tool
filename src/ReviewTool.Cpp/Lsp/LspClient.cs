@@ -62,28 +62,33 @@ public sealed class LspClient : IAsyncDisposable
     {
         var id = Interlocked.Increment(ref nextId_);
         var tcs = new TaskCompletionSource<JsonNode?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // 시간 제한은 쓰기 대기부터 건다. 호출자 취소와 시간 초과는 구분해서 알린다:
+        // 시간 초과는 함수 하나의 실패(TimeoutException)이고, 분석 전체를 멈추는 취소가 아니다.
+        using var timeoutCts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(60));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
         pending_[id] = tcs;
-        var message = new JsonObject
+        try
         {
-            ["jsonrpc"] = "2.0",
-            ["id"] = id,
-            ["method"] = method,
-            ["params"] = parameters,
-        };
-        await WriteAsync(message, cancellationToken);
-
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(timeout ?? TimeSpan.FromSeconds(60));
-        await using (cts.Token.Register(() => tcs.TrySetCanceled()))
-        {
-            try
+            var message = new JsonObject
+            {
+                ["jsonrpc"] = "2.0",
+                ["id"] = id,
+                ["method"] = method,
+                ["params"] = parameters,
+            };
+            await WriteAsync(message, linked.Token);
+            await using (linked.Token.Register(() => tcs.TrySetCanceled(linked.Token)))
             {
                 return await tcs.Task;
             }
-            finally
-            {
-                pending_.TryRemove(id, out _);
-            }
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"언어 서버 응답 시간 초과: {method}");
+        }
+        finally
+        {
+            pending_.TryRemove(id, out _);
         }
     }
 
@@ -102,12 +107,13 @@ public sealed class LspClient : IAsyncDisposable
     {
         var body = Encoding.UTF8.GetBytes(message.ToJsonString());
         var header = Encoding.ASCII.GetBytes($"Content-Length: {body.Length}\r\n\r\n");
+        // 취소는 잠금 대기까지만 받는다. 쓰는 도중에 끊으면 반쪽 메시지가 남아 이후 통신이 전부 깨진다.
         await writeLock_.WaitAsync(cancellationToken);
         try
         {
-            await input_.WriteAsync(header, cancellationToken);
-            await input_.WriteAsync(body, cancellationToken);
-            await input_.FlushAsync(cancellationToken);
+            await input_.WriteAsync(header, CancellationToken.None);
+            await input_.WriteAsync(body, CancellationToken.None);
+            await input_.FlushAsync(CancellationToken.None);
         }
         finally
         {

@@ -27,6 +27,18 @@ public class ConfigTests
         Assert.False(CppTraceAnalyzer.IsInComment(text, text.IndexOf("Register(&A::C", StringComparison.Ordinal)));
     }
 
+    // 정의를 이름으로 찾을 때 범위 비교. 빈 범위가 아무것과나 맞으면 다른 클래스의 같은 이름 함수로 간다.
+    [Theory]
+    [InlineData("Zone", "Zone", true)]
+    [InlineData("Game::Zone", "Zone", true)]
+    [InlineData("Zone", "Game::Zone", true)]
+    [InlineData("Zone", "", false)]
+    [InlineData("", "Zone", false)]
+    [InlineData("", "", true)]
+    [InlineData("MyZone", "Zone", false)]
+    public void 범위_비교(string expected, string actual, bool same) =>
+        Assert.Equal(same, CallTreeWalker.SameScope(expected, actual));
+
     [Fact]
     public void 줄과_열은_LSP_기준()
     {

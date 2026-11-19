@@ -25,6 +25,10 @@ C++(나중에 C#) 서버 코드의 호출 흐름을 보여 주는 개인 리뷰 
 - item 의 `range` 는 이름 토큰뿐이다. 본문 범위는 `FunctionBody` 가 소스에서 중괄호 짝으로 찾는다.
 - 새 Visual Studio(18) 는 clang 이 스스로 못 찾아 `<cstddef>` 부터 깨진다. `MsvcToolchain` 이 vswhere 로 찾아 `-isystem` 으로 넘긴다.
 - 색인이 끝나기 전 `outgoingCalls` 는 빈 답을 준다. `backgroundIndexProgress` 의 end 를 기다린다.
+- **파일을 열수록(didOpen) 결과가 줄 수 있다.** 연 파일의 동적 색인이 그 파일이 포함한 헤더의 인라인 함수 호출 기록을
+  가려 `outgoingCalls` 가 비는 것을 실측했다(asio-server 호출 908 → 901). 열기는 꼭 필요한 곳(진입점 prepare,
+  정의 재탐색)만 하고, 오버로드 판별 같은 것은 소스 텍스트로 한다(`FunctionBody.ParameterTypes`).
+  분석 로직을 바꾸면 asio-server 결과 수(진입점 28, 함수 304, 호출 908)가 줄지 않았는지 확인한다.
 
 ## 확인 방법
 

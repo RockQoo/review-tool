@@ -2,7 +2,7 @@ namespace ReviewTool.Cpp;
 
 // clangd 의 호출 계층은 함수 "이름" 위치만 준다. 본문 범위는 소스를 직접 읽어 중괄호 짝으로 찾는다.
 // 완전한 C++ 파서가 아니라 화면에 코드를 보여 주기 위한 근사치다. 문자열·문자·주석은 건너뛴다.
-public static class FunctionBody
+public static partial class FunctionBody
 {
     public sealed record Span(int StartLine, int EndLine, bool HasBody); // 1부터 세는 줄
 
@@ -78,6 +78,122 @@ public static class FunctionBody
         }
         return new Span(start + 1, nameLine0 + 1, false);
     }
+
+    // 이름 뒤 괄호 안의 매개변수 "타입"만 뽑는다(이름·기본값·공백 차이 제거). 오버로드를 가르는 용도라 근사치다.
+    // 예: "(const Common::C2ZMove& packet, int n = 0)" -> ["const Common::C2ZMove&", "int"]
+    public static List<string>? ParameterTypes(string[] lines, int nameLine0, int nameCol)
+    {
+        if (nameLine0 < 0 || nameLine0 >= lines.Length)
+        {
+            return null;
+        }
+        // 이름 뒤 첫 '(' 부터 짝 ')' 까지 (최대 20줄)
+        var text = string.Join('\n', lines.Skip(nameLine0).Take(20));
+        var open = text.IndexOf('(', Math.Min(nameCol, text.Length));
+        if (open < 0)
+        {
+            return null;
+        }
+        var depth = 0;
+        var close = -1;
+        for (var i = open; i < text.Length; i++)
+        {
+            if (text[i] == '(')
+            {
+                depth++;
+            }
+            else if (text[i] == ')' && --depth == 0)
+            {
+                close = i;
+                break;
+            }
+        }
+        if (close < 0)
+        {
+            return null;
+        }
+        var inner = CommentRegex().Replace(text[(open + 1)..close], " ");
+        var result = new List<string>();
+        foreach (var raw in SplitTopLevel(inner))
+        {
+            var p = raw;
+            var eq = TopLevelIndexOf(p, '=');
+            if (eq >= 0)
+            {
+                p = p[..eq];
+            }
+            p = SpaceRegex().Replace(p, " ").Trim();
+            if (p.Length == 0 || p == "void")
+            {
+                continue;
+            }
+            // 끝의 식별자가 매개변수 이름이면 뗀다(타입 키워드거나 토큰이 하나뿐이면 이름이 없는 것)
+            var m = TrailingName().Match(p);
+            if (m.Success && m.Groups[1].Value.Length > 0 && !TypeKeywords.Contains(m.Groups[2].Value))
+            {
+                p = m.Groups[1].Value.TrimEnd();
+            }
+            result.Add(SpaceRegex().Replace(p.Replace(" &", "&").Replace(" *", "*"), " "));
+        }
+        return result;
+    }
+
+    private static readonly HashSet<string> TypeKeywords =
+        ["int", "char", "bool", "float", "double", "long", "short", "unsigned", "signed", "void", "auto", "const", "volatile"];
+
+    private static IEnumerable<string> SplitTopLevel(string s)
+    {
+        var depth = 0;
+        var start = 0;
+        for (var i = 0; i < s.Length; i++)
+        {
+            switch (s[i])
+            {
+                case '(' or '<' or '[' or '{':
+                    depth++;
+                    break;
+                case ')' or '>' or ']' or '}':
+                    depth--;
+                    break;
+                case ',' when depth == 0:
+                    yield return s[start..i];
+                    start = i + 1;
+                    break;
+            }
+        }
+        yield return s[start..];
+    }
+
+    private static int TopLevelIndexOf(string s, char c)
+    {
+        var depth = 0;
+        for (var i = 0; i < s.Length; i++)
+        {
+            if (s[i] is '(' or '<' or '[' or '{')
+            {
+                depth++;
+            }
+            else if (s[i] is ')' or '>' or ']' or '}')
+            {
+                depth--;
+            }
+            else if (s[i] == c && depth == 0)
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"//[^\n]*|/\*.*?\*/", System.Text.RegularExpressions.RegexOptions.Singleline)]
+    private static partial System.Text.RegularExpressions.Regex CommentRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s+")]
+    private static partial System.Text.RegularExpressions.Regex SpaceRegex();
+
+    // (타입 부분)(끝 식별자). 타입 부분은 공백·&·*·> 로 끝나야 한다.
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(.*[\s&\*>])([A-Za-z_]\w*)$")]
+    private static partial System.Text.RegularExpressions.Regex TrailingName();
 
     // 반환형이나 template<> 가 윗줄에 있는 경우를 포함한다.
     private static int ExtendBackward(string[] lines, int nameLine0, int maxBackLines)

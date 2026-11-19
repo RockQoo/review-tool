@@ -75,7 +75,7 @@ public static partial class CompileDatabase
     private static List<CompileEntry> FromFlags(TargetConfig config, Func<string, bool> sourceFilter)
     {
         var result = new List<CompileEntry>();
-        foreach (var file in EnumerateSources(config.Root, sourceFilter))
+        foreach (var file in EnumerateSources(config.Root, sourceFilter, config.Exclude))
         {
             result.Add(new CompileEntry(config.Root, file,
                 MakeArguments(config, config.Cpp.Standard, config.Cpp.ExtraIncludeDirs, config.Cpp.ExtraDefines, file)));
@@ -86,9 +86,7 @@ public static partial class CompileDatabase
     private static List<CompileEntry> FromVcxproj(TargetConfig config, Func<string, bool> sourceFilter, List<string> diagnostics)
     {
         var result = new List<CompileEntry>();
-        var projects = Directory.EnumerateFiles(config.Root, "*.vcxproj", SearchOption.AllDirectories)
-            .Where(p => !IsBuildOutput(Path.GetRelativePath(config.Root, p)))
-            .ToList();
+        var projects = SourceFiles.Enumerate(config.Root, IsVcxproj, config.Exclude).ToList();
         if (projects.Count == 0)
         {
             diagnostics.Add("vcxproj 를 찾지 못해 cpp.extraIncludeDirs/extraDefines 만으로 해석했습니다.");
@@ -132,17 +130,19 @@ public static partial class CompileDatabase
         return args;
     }
 
-    public static IEnumerable<string> EnumerateSources(string root, Func<string, bool> sourceFilter)
+    public static IEnumerable<string> EnumerateSources(string root, Func<string, bool> sourceFilter,
+                                                       IReadOnlyList<string>? exclude = null)
     {
-        foreach (var file in Directory.EnumerateFiles(root, "*.cpp", SearchOption.AllDirectories))
+        foreach (var file in SourceFiles.Enumerate(root, f => f.EndsWith(".cpp", StringComparison.OrdinalIgnoreCase), exclude))
         {
-            var rel = Path.GetRelativePath(root, file).Replace('\\', '/');
-            if (!IsBuildOutput(rel) && sourceFilter(rel))
+            if (sourceFilter(Path.GetRelativePath(root, file).Replace('\\', '/')))
             {
                 yield return file;
             }
         }
     }
+
+    public static bool IsVcxproj(string path) => path.EndsWith(".vcxproj", StringComparison.OrdinalIgnoreCase);
 
     // bin/obj/.vs 처럼 빌드 산출물 폴더는 설정과 무관하게 뺀다. 수 GB 가 될 수 있다.
     public static bool IsBuildOutput(string relativePath)
