@@ -256,7 +256,7 @@
                         <span class="graph-info">함수 @(graphCount)개@(graphTruncated ? $" (상한 {MaxGraphNodes}개에서 자름)" : "")</span>
                     </div>
                     <div id="graph-canvas" class="graph-canvas"></div>
-                    <div class="graph-legend">노드를 누르면 진입점부터 그 함수까지의 코드가 이어 붙습니다 · 점선 테두리 = 깊이 제한으로 더 있음 · 점선 화살표 = 위로 되돌아가는 호출</div>
+                    <div class="graph-legend">노드를 누르면 진입점부터 그 함수까지의 코드가 이어 붙습니다 · 점선 테두리 = 깊이 제한으로 더 있음 · 점선 화살표 = 위로 되돌아가는 호출 · 주황 점선 = 등록 연결(추정)</div>
                 }
                 else
                 {
@@ -401,6 +401,19 @@
                             @if (node.Stop is not null && node.Stop != StopReason.External)
                             {
                                 <div class="note">@StopText(node.Stop.Value)</div>
+                            }
+                            @if (node.Implementations.Count > 0)
+                            {
+                                <div class="impls">
+                                    <span class="badge guess">구현 후보(추정)</span>
+                                    @foreach (var impl in node.Implementations)
+                                    {
+                                        var im = impl;
+                                        <button class="link mono" title="편집기에서 열기" @onclick="() => OpenInEditor(im.File, im.Line)">
+                                            @im.Name <span class="loc">@im.File:@im.Line</span>
+                                        </button>
+                                    }
+                                </div>
                             }
                         }
                     </article>
@@ -692,8 +705,16 @@
         foreach (var (from, to) in edges.Distinct())
         {
             var (a, b) = (graphIdOfNode[from], graphIdOfNode[to]);
-            var back = depthOf[to] <= depthOf[from];
-            elements.Add(new { data = new { id = $"{a}->{b}", source = a, target = b }, classes = back ? "back" : "" });
+            var classes = new List<string>();
+            if (depthOf[to] <= depthOf[from])
+            {
+                classes.Add("back");
+            }
+            if (index!.ChildrenOf(from).Any(e => e.To == to && e.Resolution == "Registration"))
+            {
+                classes.Add("guess");
+            }
+            elements.Add(new { data = new { id = $"{a}->{b}", source = a, target = b }, classes = string.Join(' ', classes) });
         }
         return (elements, graphIdOfNode[root], depthOf.Count, truncated);
     }
@@ -970,6 +991,10 @@
                 @if (node.Stop is StopReason.DepthLimit or StopReason.NodeLimit)
                 {
                     <span class="badge warn">제한</span>
+                }
+                @if (via?.Resolution == "Registration")
+                {
+                    <span class="badge guess" title="X.Dispatch(...) 를 같은 파일에서 X.Register(...) 한 핸들러로 이은 것. 소스 텍스트로 추정">등록 연결(추정)</span>
                 }
                 @if (via is not null)
                 {

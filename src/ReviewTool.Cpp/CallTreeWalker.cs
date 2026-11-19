@@ -39,9 +39,11 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
                 return null;
             }
             // prepare 결과에는 detail(한정 이름)이 없어서 정규식으로 잡은 클래스 이름을 붙인다.
+            // .cpp 의 "void C::M(...)" 정의 위치에서 받으면 name 이 이미 "C::M" 이다(그때는 붙이지 않는다).
             if (item["detail"] is null && candidate.ClassName is not null)
             {
-                item["detail"] = $"{candidate.ClassName}::{item["name"]!.GetValue<string>()}";
+                var name = item["name"]!.GetValue<string>();
+                item["detail"] = name.Contains("::") ? name : $"{candidate.ClassName}::{name}";
             }
             return await AddNodeAsync(item, ct);
         }

@@ -20,6 +20,10 @@ public sealed class TargetConfig
     // 이 이름(정규식)에 걸리는 함수는 노드로는 보이되 그 아래로 들어가지 않는다. 로그 같은 잡음용.
     public List<string> HideCallees { get; set; } = [];
 
+    // 디스패처 호출로 보는 함수 이름(정규식). 이 호출의 받는 쪽(X.Dispatch 의 X)과 같은 파일에서
+    // X.Register(..&C::H) 한 핸들러로 선을 잇는다. 비우면 연결하지 않는다.
+    public string DispatchCall { get; set; } = @"::Dispatch$";
+
     public int MaxDepth { get; set; } = 8;
     public int MaxNodes { get; set; } = 3000;
     public int MaxCodeLines { get; set; } = 200;

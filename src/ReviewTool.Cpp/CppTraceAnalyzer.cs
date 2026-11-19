@@ -86,6 +86,10 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
         var groupPrefix = CommonDirectoryPrefix(found.Select(f => f.RelativeFile));
 
         var done = 0;
+        var registrations = new List<LinkPass.Registration>();
+        var fileLines = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        string[] ReadLines(string path) =>
+            fileLines.TryGetValue(path, out var l) ? l : fileLines[path] = File.Exists(path) ? File.ReadAllLines(path) : [];
         foreach (var candidate in found)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -95,6 +99,12 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
             {
                 graph.Diagnostics.Add($"진입점의 정의를 찾지 못함: {candidate.RelativeFile}:{candidate.Line} {candidate.Method}");
                 continue;
+            }
+            // 디스패처 연결용: 이 진입점을 등록한 줄의 받는 쪽(X.Register(..) 의 X)
+            var regLine = ReadLines(candidate.File) is var rl && candidate.Line <= rl.Length ? rl[candidate.Line - 1] : "";
+            if (LinkPass.RegistrationReceiver(regLine, candidate.Column) is { } receiver)
+            {
+                registrations.Add(new LinkPass.Registration(receiver, candidate.RelativeFile, root));
             }
             if (graph.EntryPoints.Any(e => e.NodeId == root))
             {
@@ -110,6 +120,15 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
                 Detector = candidate.Rule.Name,
             });
             await walker.WalkAsync(root, cancellationToken);
+        }
+
+        // 후처리: 정적 호출이 끊기는 디스패처·가상 함수를 소스 텍스트로 잇는다(clangd 에 파일을 새로 열지 않음)
+        progress?.Report(new AnalysisProgress("link", "디스패처·가상 함수 연결 중"));
+        var linked = LinkPass.LinkDispatchers(config, graph, registrations, ReadLines);
+        var impls = await LinkPass.FindImplementationsAsync(config, graph, session, filter, ReadLines, cancellationToken);
+        if (linked > 0 || impls > 0)
+        {
+            graph.Diagnostics.Add($"추정 연결: 디스패처 → 등록 핸들러 {linked}개, 가상 함수 구현 후보 {impls}개 (소스 텍스트 기반, 확실하지 않음)");
         }
 
         if (walker.NodeLimitHit)

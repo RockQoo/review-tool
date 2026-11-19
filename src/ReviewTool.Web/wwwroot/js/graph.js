@@ -29,6 +29,7 @@ function styles() {
             }
         },
         { selector: 'edge.back', style: { 'line-style': 'dashed' } },
+        { selector: 'edge.guess', style: { 'line-style': 'dotted', 'line-color': css('--warn'), 'target-arrow-color': css('--warn') } },
         { selector: 'edge.onpath', style: { 'width': 2.5, 'line-color': css('--accent'), 'target-arrow-color': css('--accent') } },
     ];
 }

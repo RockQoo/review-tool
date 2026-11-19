@@ -56,6 +56,16 @@ public sealed class TraceNode
 
     // 이 노드 아래를 왜 더 펼치지 않았는지. null 이면 끝까지 펼쳤다.
     public StopReason? Stop { get; set; }
+
+    // 선언만 있는 가상 함수의 구현 후보(파생 클래스에서 같은 이름). 소스 텍스트로 찾은 "추정"이다.
+    public List<ImplementationRef> Implementations { get; set; } = [];
+}
+
+public sealed class ImplementationRef
+{
+    public string Name { get; set; } = "";
+    public string File { get; set; } = "";
+    public int Line { get; set; }
 }
 
 public enum NodeKind
@@ -82,7 +92,9 @@ public sealed class TraceEdge
     public string To { get; set; } = "";
     // 호출한 위치들. 같은 함수를 여러 번 부르면 여러 개.
     public List<SourceRef> CallSites { get; set; } = [];
-    // 어떻게 연결했는지. clangd 는 정적으로 해석하므로 가상 함수는 선언된 쪽으로 연결된다.
+    // 어떻게 연결했는지.
+    //  Static       : clangd 가 정적으로 해석한 호출(가상 함수는 선언된 쪽으로 연결된다)
+    //  Registration : X.Dispatch(...) 를 같은 파일에서 X.Register(...) 한 핸들러로 이은 것(추정)
     public string Resolution { get; set; } = "Static";
 }
 

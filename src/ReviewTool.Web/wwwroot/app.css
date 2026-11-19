@@ -259,6 +259,10 @@ select, input.search {
 }
 
 .badge.warn { color: var(--warn); border-color: var(--warn); }
+.badge.guess { color: var(--warn); border-style: dotted; border-color: var(--warn); }
+.impls { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; padding: 4px 12px 8px; font-size: 12px; }
+.impls .mono { font-family: var(--mono); font-variant-ligatures: none; }
+.impls .loc { color: var(--muted); font-size: 11px; }
 
 /* 코드 스택 */
 .stack { padding: 10px 14px 40vh; background: var(--bg); }
