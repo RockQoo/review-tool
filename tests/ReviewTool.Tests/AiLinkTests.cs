@@ -252,7 +252,7 @@ public class AiLinkTests
 
         var tools = f.Rpc("tools/list")["result"]!["tools"]!.AsArray().Select(t => t!["name"]!.GetValue<string>()).ToList();
         Assert.Equal(["list_targets", "get_entrypoints", "find_functions", "get_flow", "get_source", "get_flow_context", "get_impact", "compare",
-                      "get_journey", "get_flow_summary", "get_system_map", "get_class"], tools);
+                      "get_journey", "get_flow_summary", "get_system_map", "get_class", "get_checks"], tools);
 
         Assert.Equal(-32601, f.Rpc("nope")["error"]!["code"]!.GetValue<int>());
         Assert.Equal(-32700, f.Server.Handle("not json")!["error"]!["code"]!.GetValue<int>());
@@ -369,5 +369,19 @@ public class AiLinkTests
         var (text, isError) = f.CallTool("get_class", new JsonObject { ["target"] = "t", ["name"] = "World" });
         Assert.True(isError);
         Assert.Contains("재분석", text);
+    }
+
+    [Fact]
+    public void MCP_점검은_규칙_상태와_꺼진_규칙을_보여_준다()
+    {
+        using var f = new McpFixture();
+        var (text, isError) = f.CallTool("get_checks", new JsonObject { ["target"] = "t" });
+        Assert.False(isError);
+        Assert.Contains("| 락 안에서 I/O | 범위 안 금지 | 잠그는 곳", text);
+        Assert.Contains("| 공용 코드가 콘텐츠에 의존 | 의존 금지 | 꺼짐 | - |", text);
+        Assert.Contains("# 점검: t · C2SLogin", f.CallTool("get_checks", new JsonObject { ["target"] = "t", ["entry"] = "C2SLogin" }).Text);
+        var bad = f.CallTool("get_checks", new JsonObject { ["target"] = "t", ["rule"] = "없는 규칙" });
+        Assert.True(bad.IsError);
+        Assert.Contains("있는 규칙: 락 안에서 I/O", bad.Text);
     }
 }

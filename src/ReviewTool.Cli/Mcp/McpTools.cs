@@ -57,6 +57,11 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
         new("get_class", "클래스 선언: 파일:줄, 부모, 멤버(필드·메서드), 이 클래스의 분석된 함수.",
             Schema(("target", "string", "대상 이름", true), ("name", "string", "클래스 이름(일부 가능)", true)),
             a => ClassText(Target(a), Req(a, "name"))),
+        new("get_checks", "점검 규칙(대상 설정 checks): 규칙마다 상태(돌았음·꺼짐·오류)와 지적. 지적마다 근거 파일:줄, 확실도(높음·보통·낮음)와 그 이유, " +
+                          "진입점에서의 경로. 락 안 I/O, 작업 단위·레인 밖 접근, 차감 뒤 지급, 금지된 의존 같은 규칙이다(이름·소스 텍스트 추정).",
+            Schema(("target", "string", "대상 이름", true), ("rule", "string", "이 규칙 이름만(선택)", false),
+                   ("entry", "string", "이 진입점 경로에 걸친 지적만(선택). 표시 이름·함수 id·함수 이름", false)),
+            a => ChecksText(Req(a, "target"), Target(a), Opt(a, "rule"), Opt(a, "entry"))),
     ];
 
     private IReadOnlyList<Tool>? tools_;
@@ -371,6 +376,26 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
             sb.Append("- ").Append(f.Name).Append("  ").Append(f.File).Append(':').Append(f.StartLine).Append("  id=").Append(f.Id).Append('\n');
         }
         return sb.ToString();
+    }
+
+    private string ChecksText(string name, (TraceGraph G, TraceIndex I) t, string? rule, string? entry)
+    {
+        var config = LoadConfig(name);
+        var rules = config.Checks.Where(r => rule is null || r.Name == rule).ToList();
+        if (rules.Count == 0)
+        {
+            throw new ToolError(rule is null ? "대상 설정에 점검 규칙(checks)이 없습니다."
+                : $"규칙 {rule} 이 없습니다. 있는 규칙: {string.Join(", ", config.Checks.Select(r => r.Name))}");
+        }
+        var report = Checks.Run(rules, t.G, t.I, Checks.ReadFrom(config.Root));
+        var title = config.Name;
+        if (entry is not null)
+        {
+            var n = ResolveEntry(t.G, entry);
+            report = report with { Findings = report.Findings.Where(f => f.Path.Contains(n.Id)).ToList() };
+            title += " · " + EntryTitle(t.G, n);
+        }
+        return Checks.ToText(t.G, report, title);
     }
 
     private string Compare((TraceGraph G, TraceIndex I) t, string baseline)

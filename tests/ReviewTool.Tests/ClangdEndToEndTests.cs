@@ -210,6 +210,22 @@ public class ClangdEndToEndTests
             Assert.Contains(handler.Members, m => m.Name == "cache_" && m.Kind == "field");
             Assert.Contains(handler.Members, m => m.Name == "HandleEnter" && m.Kind == "method");
             Assert.Contains(graph.Types, t => t.Name == "HandlerBase");
+
+            // 점검(4단계): 기본 락 규칙 + 순서 규칙(작업 단위는 레인 너머라 되돌리기로 치지 않게 unless 를 좁힌다)
+            var order = CheckRule.Defaults().First(r => r.Kind == Checks.Order);
+            order.Enabled = true;
+            order.Unless = "(?i)refund|rollback";
+            var report = Checks.Run([.. config.Checks, order], graph, index, Checks.ReadFrom(fixture));
+            var grant = graph.Nodes.Values.Single(n => n.Name == "GameHandler::GrantReward");
+            var locked = Assert.Single(report.Findings, f => f.Kind == Checks.ForbidInScope);
+            Assert.Equal((grant.Id, Certainty.High), (locked.NodeId, locked.Certainty));
+            Assert.Equal("Session::Flush 호출", Assert.Single(locked.Evidence).Note);
+            Assert.Equal([enter.Id, grant.Id], locked.Path.Take(2));
+            var reward = Assert.Single(report.Findings, f => f.Kind == Checks.Order);
+            Assert.Equal("L2GEnter: Wallet::Spend 뒤 Inventory::AddItem", reward.Title);
+            Assert.Equal(["먼저: Wallet::Spend", "나중: Inventory::AddItem"], reward.Evidence.Select(e => e.Note));
+            Assert.Equal([RuleState.Ran, RuleState.Off, RuleState.Off, RuleState.Off, RuleState.Off, RuleState.Ran],
+                         report.Runs.Select(r => r.State));
         }
         finally
         {

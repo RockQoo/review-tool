@@ -28,6 +28,10 @@ C++(나중에 C#) 서버 코드의 호출 흐름을 보여 주는 개인 리뷰 
 - `Register(this, &C::H)` 처럼 함수 주소만 넘긴 줄을 clangd 는 호출로 준다. 여정·흐름 요약은 `TraceQueries.IsAddressOnly` 로 이런 선을 따라가지 않는다.
 - clangd 는 프로세스마다 있는 `main` 에 같은 심볼 ID 를 준다. 정의 파일이 다르면 다른 노드로 나누고(`CallTreeWalker`) 제 본문 안 호출만 남긴다.
 - 클래스 선언(`TypePass`)은 **모든 호출 조회가 끝난 뒤**에 파일을 연다(아래 "파일을 열수록 결과가 줄 수 있다").
+- 4단계 점검 규칙(`Checks`)은 **분석 결과에 저장하지 않고** 저장된 결과 + 설정 `checks` 로 그때그때 돈다. 그래서 `checks` 는
+  `TargetConfig.ContentHash` 에서 뺀다(규칙만 고쳤는데 "설정 바뀜"이 되지 않게). 규칙 종류는 범용 4가지
+  (`forbidInScope`·`requireWithin`·`order`·`dependency`)이고, 특정 저장소 이름은 기본값이 아니라 `targets/*.json` 에 둔다.
+- 모든 지적은 근거(파일:줄)·확실도·그 이유를 단다. 꺼진 규칙은 "꺼짐", 잘못된 규칙은 "오류"로 남긴다(조용히 빼지 않는다).
 
 ## clangd 사용 요령 (실측, 바꾸기 전에 읽을 것)
 

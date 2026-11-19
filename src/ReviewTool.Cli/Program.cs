@@ -4,6 +4,7 @@ using ReviewTool.Cpp;
 // 사용법:
 //   review-tool analyze <targets/이름.json> [--data <폴더>]
 //   review-tool show    <targets/이름.json> [--data <폴더>]   저장된 결과 요약
+//   review-tool check   <targets/이름.json> [--data <폴더>] [--strict]   점검 규칙(checks). --strict 면 확실도 높음이 있을 때 종료 코드 3
 //   review-tool init    <분석할 폴더> [--name 이름] [--force]   폴더를 보고 targets/<이름>.json 을 만든다
 //   review-tool mcp     [--targets <폴더>] [--data <폴더>]      MCP 서버(stdio). Claude Code·Codex 에서 분석 결과 조회
 return await CliMain.RunAsync(args);
@@ -20,10 +21,10 @@ internal static class CliMain
         {
             return await RunMcpAsync(args);
         }
-        if (args.Length < 2 || args[0] is not ("analyze" or "show" or "probe"))
+        if (args.Length < 2 || args[0] is not ("analyze" or "show" or "probe" or "check"))
         {
             Console.Error.WriteLine("사용법: review-tool init <폴더> [--name 이름] [--force]");
-            Console.Error.WriteLine("        review-tool analyze|show <targets/이름.json> [--data <폴더>]");
+            Console.Error.WriteLine("        review-tool analyze|show|check <targets/이름.json> [--data <폴더>] [--strict]");
             return 2;
         }
 
@@ -34,6 +35,19 @@ internal static class CliMain
         if (args[0] == "probe")
         {
             return await Probe.RunAsync(config, paths, args);
+        }
+
+        if (args[0] == "check")
+        {
+            var loaded = TraceStore.TryLoad(paths.TraceFile);
+            if (loaded is null)
+            {
+                Console.Error.WriteLine($"저장된 결과가 없음: {paths.TraceFile}");
+                return 1;
+            }
+            var report = Checks.Run(config.Checks, loaded, new TraceIndex(loaded), Checks.ReadFrom(config.Root));
+            Console.WriteLine(Checks.ToText(loaded, report, config.Name));
+            return args.Contains("--strict") && report.Findings.Any(f => f.Certainty == Certainty.High) ? 3 : 0;
         }
 
         if (args[0] == "show")

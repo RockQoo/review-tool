@@ -18,3 +18,9 @@
 - `channels`: 메시지 통로. 기본값은 흔한 패킷 모양(`Send*(`, `PacketId::X`, `X::kPacketId`, `case PacketId::X`) 하나.
   레인처럼 같은 프로세스 안 메시지는 `"crossProcess": false` 와 `register`(핸들러 등록 정규식)를 더한다. 예는 README "대상 추가".
 - `tags`: 함수 이름(`pattern`)·본문 줄(`code`) 규칙으로 붙이는 표시. 비우면 흐름 요약이 비어 보인다.
+
+4단계 점검 규칙용 설정:
+
+- `checks`: 규칙 목록. 종류는 `forbidInScope`(락 안 I/O 등), `requireWithin`(작업 단위·레인 밖 접근), `order`(차감 뒤 지급),
+  `dependency`(금지된 의존). 기본값은 락 안 I/O 만 켜져 있고 나머지는 꺼져 있다. 대상의 이름(클래스·폴더)에 맞춰 정규식·glob 을 고치고
+  `"enabled": true` 로 켠다. 예와 키 설명은 README "점검 규칙". 점검만 바꾸면 재분석할 필요가 없다(화면의 "다시 점검").

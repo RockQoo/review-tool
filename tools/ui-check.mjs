@@ -192,6 +192,19 @@ await waitFor(`!!document.getElementById('map-canvas')?._cy && document.getEleme
 await sleep(800);
 console.log('classes', await evaluate(`(() => { const cy = document.getElementById('map-canvas')._cy; return { classes: cy.nodes().length, inherit: cy.edges('.inherit').length }; })()`));
 await shot('14-classes');
+
+// 4단계: 점검 규칙 → 지적을 누르면 경로가 코드 스택으로 열리고 근거 줄이 표시됨
+await evaluate(`document.querySelector('.views button[title^="점검 규칙"]').click()`);
+await waitFor(`!!document.querySelector('.rule-table')`);
+console.log('checks rules', await evaluate(`[...document.querySelectorAll('.rule-table tbody tr')].map(r => r.innerText.replace(/\\s+/g, ' ').trim())`));
+console.log('checks findings', await evaluate(`document.querySelectorAll('.finding-list > li').length`));
+await shot('15-checks');
+if (await evaluate(`!!document.querySelector('.finding-row')`)) {
+  await click('.finding-row');
+  console.log('checks open → frames', await evaluate(`[...document.querySelectorAll('.frame .fname')].map(e => e.textContent)`),
+    'flagged', await evaluate(`document.querySelectorAll('.line.flag').length`));
+  await shot('15b-checks-open');
+}
 await evaluate(`document.querySelector('.views button[title="트리 보기"]').click()`);
 
 // 대상 추가: 폴더 목록 → 경로 입력 → 설정 제안(저장은 하지 않고 취소)

@@ -1,0 +1,152 @@
+@using ReviewTool.Core
+@using ReviewTool.Web.Services
+@inject TraceWorkspace Workspace
+
+@* 점검 규칙: 대상 설정(checks)의 규칙마다 상태와 지적. 저장된 분석 결과로 그때그때 돌아서, 규칙을 고친 뒤 "다시 점검"만 누르면 된다. *@
+<div class="checks">
+    <div class="tree-tools">
+        <button class="link" title="설정 파일을 다시 읽어 점검합니다(재분석은 필요 없음)" @onclick="Reload">다시 점검</button>
+        <span class="tags" role="group" aria-label="확실도 고르기">
+            @foreach (var c in AllCertainties)
+            {
+                var cert = c;
+                <button class="tag-chip @(hidden.Contains(cert) ? "" : "on")" aria-pressed="@(hidden.Contains(cert) ? "false" : "true")"
+                        @onclick="() => Toggle(cert)">확실도 @Checks.CertaintyText(cert) <span class="count">@(report?.Findings.Count(f => f.Certainty == cert) ?? 0)</span></button>
+            }
+        </span>
+        @if (EntryNodeId is not null)
+        {
+            <label title="고른 진입점에서 시작하는 경로에 걸친 지적만"><input type="checkbox" @bind="onlyEntry" /> 고른 진입점만</label>
+        }
+        <span class="graph-info">지적 @Visible.Count()개</span>
+    </div>
+
+    @if (error is not null)
+    {
+        <div class="note warn">@error</div>
+    }
+    else if (report is not null)
+    {
+        <table class="rule-table">
+            <thead><tr><th>규칙</th><th>종류</th><th>상태</th><th>지적</th></tr></thead>
+            <tbody>
+                @foreach (var run in report.Runs)
+                {
+                    <tr class="@(run.State == RuleState.Off ? "off" : "")">
+                        <td title="@run.Rule.Description">@run.Rule.Name</td>
+                        <td class="kind">@Checks.KindText(run.Rule.Kind)</td>
+                        <td>
+                            @if (run.State == RuleState.Off)
+                            {
+                                <span class="badge">꺼짐</span>
+                            }
+                            else if (run.State == RuleState.Error)
+                            {
+                                <span class="badge warn">오류</span> <span class="run-note">@run.Note</span>
+                            }
+                            else
+                            {
+                                <span class="run-note">@run.Note</span>
+                            }
+                        </td>
+                        <td class="num">@(run.State == RuleState.Ran ? $"{run.Count}{(run.Cut ? "+" : "")}" : "-")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <p class="hint-line">규칙은 대상 설정 파일의 <code>checks</code> 에서 켜고 고칩니다(<code>enabled</code>, 정규식). 고친 뒤 <b>다시 점검</b>을 누르세요. 설정: @Workspace.ConfigPath(Target)</p>
+
+        @foreach (var group in Visible.GroupBy(f => f.Rule))
+        {
+            <h3>@group.Key <span class="count">@group.Count()</span></h3>
+            <ol class="finding-list">
+                @foreach (var finding in group)
+                {
+                    var f = finding;
+                    <li>
+                        <button class="link finding-row" title="근거 줄을 표시해 코드 스택으로 열기" @onclick="() => OnOpen.InvokeAsync(f)">
+                            <span class="badge cert-@f.Certainty.ToString().ToLowerInvariant()">@Checks.CertaintyText(f.Certainty)</span>
+                            <span class="fn">@f.Title</span>
+                            <span class="loc">@f.Site</span>
+                        </button>
+                        <div class="msg">@f.Message <span class="why">확실도 근거: @f.Why</span></div>
+                        <ul class="evidence">
+                            @foreach (var e in f.Evidence)
+                            {
+                                <li><span class="loc">@e.Site</span> @e.Note
+                                    @if (e.Text.Length > 0)
+                                    {
+                                        <div class="src mono">@e.Text</div>
+                                    }
+                                </li>
+                            }
+                        </ul>
+                    </li>
+                }
+            </ol>
+        }
+        @if (!Visible.Any())
+        {
+            <p class="hint-line">보이는 지적이 없습니다. 지적이 없다는 것은 규칙을 지킨다는 뜻이 아니라 찾지 못했다는 뜻입니다.</p>
+        }
+        <details class="limits">
+            <summary>이 결과가 증명하지 않는 것</summary>
+            <ul>
+                @foreach (var l in Checks.Limits)
+                {
+                    <li>@l</li>
+                }
+            </ul>
+        </details>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Target { get; set; } = "";
+    [Parameter, EditorRequired] public TraceGraph Graph { get; set; } = default!;
+    [Parameter, EditorRequired] public TraceIndex Index { get; set; } = default!;
+    [Parameter] public string? EntryNodeId { get; set; }
+    [Parameter] public EventCallback<Checks.Finding> OnOpen { get; set; }
+
+    private static readonly Certainty[] AllCertainties = [Certainty.High, Certainty.Medium, Certainty.Low];
+    private Checks.Report? report;
+    private string? error;
+    private bool onlyEntry;
+    private readonly HashSet<Certainty> hidden = [];
+    private (string, TraceGraph)? builtFor;
+
+    protected override void OnParametersSet()
+    {
+        if (builtFor != (Target, Graph))
+        {
+            Reload();
+        }
+    }
+
+    private void Reload()
+    {
+        builtFor = (Target, Graph);
+        try
+        {
+            var config = Workspace.LoadConfig(Target);
+            report = Checks.Run(config.Checks, Graph, Index, Checks.ReadFrom(config.Root));
+            error = null;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or System.Text.Json.JsonException or UnauthorizedAccessException)
+        {
+            report = null;
+            error = $"설정을 읽지 못했습니다: {ex.Message}";
+        }
+    }
+
+    private IEnumerable<Checks.Finding> Visible => report is null ? [] : report.Findings.Where(f =>
+        !hidden.Contains(f.Certainty) && (!onlyEntry || EntryNodeId is null || f.Path.Contains(EntryNodeId)));
+
+    private void Toggle(Certainty c)
+    {
+        if (!hidden.Remove(c))
+        {
+            hidden.Add(c);
+        }
+    }
+}

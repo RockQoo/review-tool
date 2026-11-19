@@ -51,6 +51,7 @@ AI 코드 리뷰(지적 목록)나 테스트를 대신하지 않는다. 그 지�
 | 흐름 요약 | 진입점에서 소스 순서대로 표시(설정·스레드·등록·네트워크·DB·캐시·작업 단위)가 붙은 호출만. `main` 이면 시작 순서, 패킷 핸들러면 DB·캐시 접근 순서 |
 | 전체 흐름도 | 프로세스(빌드 프로젝트) × 클래스 지도. 클래스 사이 호출 수, 프로세스를 넘는 패킷. 고른 진입점이 거치는 클래스만 밝게 |
 | 클래스 다이어그램 | 흐름에 나온 클래스의 부모(상속)와 멤버(clangd 선언). 고른 흐름의 클래스만 또는 전체 |
+| 점검 규칙 | 대상 설정(`checks`)으로 켜는 규칙: 락 안 I/O, 작업 단위·레인 밖 접근, 차감 뒤 지급(되돌리기 없음), 금지된 의존. 지적마다 근거 파일:줄, 확실도(높음·보통·낮음)와 그 이유. 누르면 진입점부터의 경로가 코드 스택으로 열리고 근거 줄이 표시된다. 꺼진 규칙은 "꺼짐"으로 남는다 |
 
 ## 리뷰 순서 예
 
@@ -86,6 +87,7 @@ codex mcp add review-tool -- dotnet <저장소>\src\ReviewTool.Cli\bin\Debug\net
 | `get_flow_summary` | 흐름 요약: 표시(DB·캐시·스레드 등)가 붙은 호출을 순서대로 |
 | `get_system_map` | 프로세스별 클래스, 클래스 사이 호출, 프로세스를 넘는 패킷 |
 | `get_class` | 클래스 선언: 부모·자식, 멤버, 분석된 함수 |
+| `get_checks` | 점검 규칙: 규칙마다 상태(돌았음·꺼짐·오류)와 지적(근거 파일:줄, 확실도, 경로). 규칙·진입점으로 거르기 |
 
 MCP 서버는 저장된 분석 결과(`data/`)를 읽기만 한다. 분석을 돌리거나 파일을 쓰지 않는다.
 
@@ -109,7 +111,7 @@ MCP 서버는 저장된 분석 결과(`data/`)를 읽기만 한다. 분석을 �
 | `ReviewTool.Core` | 언어와 무관한 결과 형식(`TraceGraph`), 대상 설정(`TargetConfig`), 저장, 조회(여정·요약·흐름도), 메시지 찾기(`MessagePass`, 소스 텍스트) |
 | `ReviewTool.Cpp` | C++ 어댑터. vcxproj → compile_commands.json, clangd 호출 계층으로 트리 생성 |
 | `ReviewTool.Web` | 화면. 진입점 목록 · 호출 트리 · 여정 · 요약 · 흐름도 · 클래스 · 코드 스택 |
-| `ReviewTool.Cli` | 화면 없이 분석(`analyze`), 요약(`show`), clangd 응답 확인(`probe`), MCP 서버(`mcp`) |
+| `ReviewTool.Cli` | 화면 없이 분석(`analyze`), 요약(`show`), 점검(`check`, `--strict` 면 확실도 높음 지적이 있을 때 종료 코드 3), clangd 응답 확인(`probe`), MCP 서버(`mcp`) |
 
 ## 실행
 
@@ -153,9 +155,38 @@ MCP 서버는 저장된 분석 결과(`data/`)를 읽기만 한다. 분석을 �
 ]
 ```
 
+### 점검 규칙(`checks`)
+
+규칙은 종류(`kind`) 넷 중 하나다. 정규식은 함수 한정 이름(`Ns::Class::Method`)에 건다(`scopeOpen`·`scopeClose` 만 본문 줄).
+점검은 저장된 분석 결과로 그때그때 돌기 때문에 규칙을 고친 뒤 **재분석 없이** 화면의 "다시 점검"만 누르면 된다(설정 지문에도 넣지 않는다).
+
+| `kind` | 걸리는 것 | 쓰는 키 |
+|---|---|---|
+| `forbidInScope` | 본문에서 `scopeOpen` 줄부터 그 블록 끝(또는 `scopeClose`)까지 `forbid` 함수·`forbidTags` 표시를 부름. `depth` 단계 아래 함수까지 본다. `scope: "statement"` 면 그 문장만(`ref.Write()->Foo()` 같은 임시 잠금) | `scopeOpen`, `scopeClose`, `scope`, `forbid`, `forbidTags`, `depth` |
+| `requireWithin` | 진입점에서 `subject` 함수까지 `within` 함수를 거치지 않고 닿음. `withinEdges`(예: `["Message"]`)를 지나면 안으로 들어간 것, `withinEntry` 에 맞는 진입점(표시 이름·묶음·찾은 규칙 이름)은 처음부터 안 | `subject`, `within`, `withinEdges`, `withinEntry` |
+| `order` | 한 흐름(소스 순서)에서 `first` 뒤에 `then` 을 부르는데 `unless` 가 흐름 어디에도 없음 | `first`, `then`, `unless` |
+| `dependency` | `from` 파일(glob)의 함수가 `to` 파일 함수를 부르거나 `#include` 함 | `from`, `to` |
+
+기본값은 범용 규칙 5개이고 **락 안 I/O 만 켜져 있다**. 나머지는 이름이 대상마다 달라 `"enabled": true` 와 정규식을 맞춰 켠다.
+`checks` 를 json 에 적으면 기본값을 대신한다(쓰려는 규칙을 모두 적는다).
+
+```json
+"checks": [
+  { "name": "레인 밖에서 존 상태 변경", "kind": "requireWithin",
+    "subject": "(?:^|::)(?:UnitContainer|Zone)::(?:Add|Remove)\\w*$",
+    "withinEntry": "^(레인 메시지|멤버 함수 등록)$", "withinEdges": ["Message"] },
+  { "name": "Core 가 서버에 의존", "kind": "dependency", "from": ["Server/Core/**"], "to": ["Server/*Server/**"] }
+]
+```
+
+확실도: **높음** = 정적 호출·`#include` 가 그 자리에 직접 있음, **보통** = 아래 함수 안에서·이름 표시로·소스 순서로 판단,
+**낮음** = 추정 연결(등록·메시지)을 지남. 어느 것이든 이름 규칙에 기댄 추정이라 지적은 "볼 곳"이지 판정이 아니다.
+
 ## 한계 (화면의 "못 본 것"에도 나온다)
 
 - **정적 분석**이다. 가상 함수·`std::function`·함수 포인터로 부르는 곳은 선언까지만 간다(`정의 없음`).
 - 디스패처처럼 "등록 → 나중에 호출" 구조는 등록 지점을 진입점으로 잡는 방식으로 우회한다.
 - 패킷 여정·메시지 연결·표시는 **소스 텍스트(정규식) 추정**이다. 실행 중에 정해지는 패킷 id(중계 봉투 안)는 이름으로 잇지 못하고 "안쪽 호출로 이어짐"으로 보인다. 보내는 곳은 분석한 함수(진입점에서 닿은 함수) 안에서만 찾는다.
 - 함수 본문 범위는 중괄호 짝으로 찾는 근사치다(매크로로 만든 함수는 틀릴 수 있다).
+- 점검 규칙은 분석에서 펼친 함수만 본다(`hideCallees` 로 숨긴 함수 안, 람다 안, 깊이 제한 너머는 안 본다). 지적이 없다는 것은 "찾지 못했다"는 뜻이다.
+  `#include` 는 컴파일러의 include 경로를 보지 않고, 같은 이름 파일 중 가장 가까운 폴더의 것으로 본다.

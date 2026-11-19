@@ -244,6 +244,11 @@
                     <SystemMapView Graph="graph" Index="index" Mode="@viewMode" EntryNodeId="@selectedEntry?.NodeId"
                                    OnOpen="OpenFlowPath" OnSelectEntry="SelectEntryFromMap" />
                 }
+                else if (viewMode == "checks")
+                {
+                    <div class="view-title">점검 규칙 · <b>@target</b></div>
+                    <ChecksView Target="@(target ?? "")" Graph="graph" Index="index" EntryNodeId="@selectedEntry?.NodeId" OnOpen="OpenFinding" />
+                }
                 else if (viewMode == "journey")
                 {
                     <div class="view-title">패킷 여정 · <b>@selectedEntry!.Label</b> <span class="sub">@selectedEntry.Group</span></div>
@@ -390,7 +395,9 @@
                                     var hasCalls = calls.TryGetValue(lineNo, out var lineCalls);
                                     var isNext = nextCallLines.Contains(lineNo);
                                     var isOpen = openLine == (frameIndex, lineNo);
-                                    <div class="line @(hasCalls ? "call" : "") @(isNext ? "next" : "") @(isOpen ? "open" : "")"
+                                    var isFlag = flagged.Count > 0 && flagged.Contains((node.File, lineNo));
+                                    <div class="line @(hasCalls ? "call" : "") @(isNext ? "next" : "") @(isOpen ? "open" : "") @(isFlag ? "flag" : "")"
+                                         title="@(isFlag ? "점검 지적의 근거 줄" : null)"
                                          tabindex="@(hasCalls ? "0" : null)" role="@(hasCalls ? "button" : null)"
                                          @onclick="() => ToggleLine(frameIndex, lineNo, hasCalls)"
                                          @onkeydown="e => OnLineKey(e, frameIndex, lineNo, hasCalls)">
@@ -532,6 +539,7 @@
         ("summary", "list-checks", "흐름 요약 (시작 순서, DB·캐시 접근 순서)"),
         ("map", "map", "전체 흐름도 (프로세스 × 클래스)"),
         ("classes", "boxes", "클래스 다이어그램"),
+        ("checks", "shield-alert", "점검 규칙 (락 안 I/O, 레인·작업 단위 밖 접근, 차감 뒤 지급, 의존)"),
     ];
 
     // 칸 배치: 그림이 큰 보기는 위아래(wide), 나머지는 세 칸
@@ -542,7 +550,7 @@
         _ => "tree",
     };
 
-    private bool NeedsEntry => viewMode is not ("map" or "classes");
+    private bool NeedsEntry => viewMode is not ("map" or "classes" or "checks");
 
     // 여정·요약·지도에서 고른 경로를 코드 스택으로(고른 진입점은 그대로 둔다)
     private void OpenFlowPath(IReadOnlyList<string> path)
@@ -553,7 +561,28 @@
         }
         stack = [.. path];
         openLine = null;
+        flagged.Clear();
     }
+
+    // 점검 지적: 경로를 코드 스택으로 열고 근거 줄을 표시한다. 경로가 없으면(#include 지적) 편집기로.
+    private void OpenFinding(Checks.Finding f)
+    {
+        if (graph is null)
+        {
+            return;
+        }
+        var path = f.Path.Where(graph.Nodes.ContainsKey).ToList();
+        if (path.Count == 0)
+        {
+            OpenInEditor(f.Site.File, f.Site.Line);
+            return;
+        }
+        OpenFlowPath(path);
+        flagged.UnionWith(f.Evidence.Select(e => (e.Site.File, e.Site.Line)).Append((f.Site.File, f.Site.Line)));
+    }
+
+    // 점검 지적의 근거 줄(파일, 줄). 코드 스택에서 강조한다.
+    private readonly HashSet<(string File, int Line)> flagged = [];
 
     private void SelectEntryFromMap(EntryPoint e)
     {
@@ -1019,6 +1048,7 @@
         expanded.Add(e.NodeId);
         stack = [e.NodeId];
         openLine = null;
+        flagged.Clear();
     }
 
     // ---- 트리 ----

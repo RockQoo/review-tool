@@ -31,6 +31,9 @@ public sealed class TargetConfig
     // 함수 이름 규칙으로 붙이는 표시(흐름 요약: 시작 순서, DB·캐시 접근 순서). 이름만 보는 추정이다.
     public List<TagRule> Tags { get; set; } = TagRule.Defaults();
 
+    // 점검 규칙(4단계). 분석 결과를 바꾸지 않으므로 고쳐도 재분석할 필요가 없다(ContentHash 에서 뺀다).
+    public List<CheckRule> Checks { get; set; } = CheckRule.Defaults();
+
     public int MaxDepth { get; set; } = 8;
     public int MaxNodes { get; set; } = 3000;
     public int MaxCodeLines { get; set; } = 200;
@@ -67,7 +70,13 @@ public sealed class TargetConfig
     }
 
     // 분석 결과에 영향을 주는 설정의 지문(파일 서식·주석과 무관).
-    public string ContentHash() => Freshness.HashText(JsonSerializer.Serialize(this, JsonOptions));
+    // 점검 규칙(checks)은 분석에 쓰지 않으므로 넣지 않는다(규칙만 고쳤는데 "설정 바뀜"으로 보이지 않게).
+    public string ContentHash()
+    {
+        var node = JsonSerializer.SerializeToNode(this, JsonOptions)!.AsObject();
+        node.Remove("checks");
+        return Freshness.HashText(node.ToJsonString(JsonOptions));
+    }
 
     public static TargetConfig Load(string path)
     {

@@ -11,6 +11,7 @@ class Session
 {
 public:
     void SendPacket(PacketId id, const void* data);
+    void Flush();
 };
 
 template <typename T>
