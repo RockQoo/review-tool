@@ -53,6 +53,7 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
         progress?.Report(new AnalysisProgress("prepare", "입력 파일 기록 중"));
         graph.Inputs = EnumerateInputs(config).Select(f => InputFile.Read(config.Root, f)).ToList();
         graph.ConfigHash = config.ContentHash();
+        graph.FingerprintVersion = CodeFingerprint.Version;
 
         progress?.Report(new AnalysisProgress("prepare", "컴파일 옵션 정리 중"));
         var entries = CompileDatabase.Build(config, filter, graph.Diagnostics);

@@ -161,21 +161,43 @@ public sealed class TraceWorkspace(IConfiguration configuration, IWebHostEnviron
     }
 
     // 분석 결과가 지금 코드와 같은지. 파일 목록·크기·시각 비교(다르면 해시)라 분석은 돌리지 않는다.
-    public FreshnessReport CheckFreshness(string name)
+    // 저장소를 도는 일이라 화면 스레드가 아니라 백그라운드에서 하고, 같은 대상의 진행 중·최근(10초) 검사는
+    // 탭이 여러 개여도 하나를 같이 쓴다.
+    public Task<FreshnessReport> CheckFreshnessAsync(string name)
     {
         var loaded = Get(name);
         if (loaded is null)
         {
-            return new FreshnessReport(FreshnessState.Unknown, [], [], [], false, "분석 결과가 없습니다.");
+            return Task.FromResult(new FreshnessReport(FreshnessState.Unknown, [], [], [], false, "분석 결과가 없습니다."));
         }
+        var graph = loaded.Value.Graph;
+        lock (lock_)
+        {
+            if (freshness_.TryGetValue(name, out var cached) && ReferenceEquals(cached.Graph, graph) &&
+                (!cached.Task.IsCompleted || DateTime.UtcNow - cached.StartedAt < TimeSpan.FromSeconds(10)))
+            {
+                return cached.Task;
+            }
+            var task = Task.Run(() => EvaluateFreshness(name, graph));
+            freshness_[name] = (graph, task, DateTime.UtcNow);
+            return task;
+        }
+    }
+
+    private readonly Dictionary<string, (TraceGraph Graph, Task<FreshnessReport> Task, DateTime StartedAt)> freshness_ = [];
+
+    private FreshnessReport EvaluateFreshness(string name, TraceGraph graph)
+    {
         try
         {
             var config = LoadConfig(name);
             var inputs = AnalyzerFor(config.Language).EnumerateInputs(config);
-            return Freshness.Evaluate(loaded.Value.Graph, inputs, config.ContentHash());
+            return Freshness.Evaluate(graph, inputs, config.ContentHash());
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or NotSupportedException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or
+                                       NotSupportedException or System.Text.Json.JsonException)
         {
+            // 설정을 손으로 고치는 중(문법 오류)이면 "확인 불가"로 두고, 고치면 다음 검사에서 돌아온다
             return new FreshnessReport(FreshnessState.Unknown, [], [], [], false, ex.Message);
         }
     }

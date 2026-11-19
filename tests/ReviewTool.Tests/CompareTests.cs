@@ -15,6 +15,82 @@ public class CompareTests
         Assert.Equal("void A::Run(int x)", CodeFingerprint.Signature(a));
     }
 
+    [Fact]
+    public void 문자열_안의_공백_변경은_본문_변경이다()
+    {
+        Assert.NotEqual(CodeFingerprint.Body("void F() { Send(\"a b\"); }"), CodeFingerprint.Body("void F() { Send(\"ab\"); }"));
+        Assert.NotEqual(CodeFingerprint.Body("void F() { char c = ' '; }"), CodeFingerprint.Body("void F() { char c = '_'; }"));
+        // 식별자 사이 공백은 토큰 경계
+        Assert.NotEqual(CodeFingerprint.Body("void F() { return x; }"), CodeFingerprint.Body("void F() { returnx; }"));
+        // 문자열 안의 // 는 주석이 아니다
+        Assert.NotEqual(CodeFingerprint.Body("void F() { Log(\"http://a\"); }"), CodeFingerprint.Body("void F() { Log(\"http://b\"); }"));
+    }
+
+    [Fact]
+    public void 파일이_다른_같은_이름_함수를_따로_비교한다()
+    {
+        TraceNode Static(string id, string file, string code) => new()
+        {
+            Id = id, Name = "Helper", File = file, StartLine = 1, Code = code,
+            Signature = CodeFingerprint.Signature(code), BodyHash = CodeFingerprint.Body(code),
+        };
+        var before = Graph(Static("a", "a.cpp", "static void Helper() { x = 1; }"), Static("b", "b.cpp", "static void Helper() { y = 1; }"));
+        var after = Graph(Static("a", "a.cpp", "static void Helper() { x = 1; }"), Static("b", "b.cpp", "static void Helper() { y = 2; }"));
+
+        var r = SnapshotComparer.Compare(before, after);
+
+        var changed = Assert.Single(r.BodyChanged);
+        Assert.Equal("b.cpp", changed.File);
+    }
+
+    [Fact]
+    public void 오버로드가_바뀐_호출을_잡는다()
+    {
+        var before = Graph(Fn("H", "void H() { Foo(1); }"), Fn("Foo", "void Foo(int v) { }"), FnId("Foo2", "Foo", "void Foo(const char* s) { }"));
+        before.Edges.Add(new TraceEdge { From = "H@id", To = "Foo@id" });
+        var after = Graph(Fn("H", "void H() { Foo(\"x\"); }"), Fn("Foo", "void Foo(int v) { }"), FnId("Foo2", "Foo", "void Foo(const char* s) { }"));
+        after.Edges.Add(new TraceEdge { From = "H@id", To = "Foo2@id" });
+
+        var r = SnapshotComparer.Compare(before, after);
+
+        Assert.Single(r.CallsAdded);
+        Assert.Single(r.CallsRemoved);
+        Assert.Contains("const char* s", r.CallsAdded[0].To);   // 이름이 겹치면 시그니처를 붙여 보여 준다
+    }
+
+    [Fact]
+    public void 기준_목록은_분석_시각을_읽는다()
+    {
+        var data = Directory.CreateTempSubdirectory("rt-snap").FullName;
+        try
+        {
+            var paths = new WorkPaths(data, "t");
+            var g = Graph(Fn("A", "void A() {}"));
+            g.AnalyzedAt = new DateTimeOffset(2026, 11, 20, 1, 2, 3, TimeSpan.Zero);
+            TraceStore.Save(g, paths.TraceFile);
+            SnapshotStore.KeepPrevious(paths);
+            var saved = SnapshotStore.SaveBaseline(paths, g);
+
+            var list = SnapshotStore.List(paths);
+
+            Assert.Equal([SnapshotStore.PreviousId, saved.Id], list.Select(s => s.Id));
+            Assert.All(list, s => Assert.Equal(g.AnalyzedAt, s.AnalyzedAt));
+            Assert.NotNull(SnapshotStore.Load(paths, saved.Id));
+            Assert.Null(SnapshotStore.Load(paths, "../t/trace"));
+        }
+        finally
+        {
+            Directory.Delete(data, true);
+        }
+    }
+
+    private static TraceNode FnId(string id, string name, string code)
+    {
+        var n = Fn(name, code);
+        n.Id = id + "@id";
+        return n;
+    }
+
     private static TraceNode Fn(string name, string code) => new()
     {
         Id = name + "@id", Name = name, File = "a.cpp", StartLine = 1, Code = code,
@@ -23,7 +99,7 @@ public class CompareTests
 
     private static TraceGraph Graph(params TraceNode[] nodes)
     {
-        var g = new TraceGraph { RootDirectory = "r", ConfigHash = "c" };
+        var g = new TraceGraph { RootDirectory = "r", ConfigHash = "c", FingerprintVersion = CodeFingerprint.Version };
         foreach (var n in nodes)
         {
             g.Nodes[n.Id] = n;
@@ -75,6 +151,13 @@ public class CompareTests
         var other = Graph(Fn("A", "void A() {}"));
         other.ConfigHash = "c2";
         Assert.Single(SnapshotComparer.Compare(g, other).ConditionWarnings);
+
+        // 지문 방식이 다른 옛 결과: 본문은 비교하지 않고 경고만
+        var old = Graph(Fn("A", "void A() { x = 1; }"));
+        old.FingerprintVersion = 1;
+        var r = SnapshotComparer.Compare(old, Graph(Fn("A", "void A() { x = 2; }")));
+        Assert.Empty(r.BodyChanged);
+        Assert.Single(r.ConditionWarnings);
     }
 
     // 실제 clangd 로: 예제를 분석 → 코드 수정 → 재분석 → 비교

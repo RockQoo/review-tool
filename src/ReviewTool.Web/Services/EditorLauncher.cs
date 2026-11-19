@@ -34,11 +34,8 @@ public sealed class EditorLauncher(ILogger<EditorLauncher> logger)
                 psi.ArgumentList.Add($"Edit.GoTo {Math.Max(1, line)}");
                 break;
             default:
-                // code.cmd 는 배치 파일이라 cmd 로 띄운다
-                psi.FileName = "cmd.exe";
-                psi.ArgumentList.Add("/c");
-                psi.ArgumentList.Add(editor.Executable);
-                psi.ArgumentList.Add("-g");
+                // 셸(cmd)을 거치지 않는다: 경로에 & 같은 문자가 있으면 명령으로 해석될 수 있다
+                psi.ArgumentList.Add("--goto");
                 psi.ArgumentList.Add($"{file}:{Math.Max(1, line)}");
                 break;
         }
@@ -70,12 +67,17 @@ public sealed class EditorLauncher(ILogger<EditorLauncher> logger)
                 }
             }
         }
+        // VS Code: PATH 의 <설치>\bin\code.cmd 옆 상위 폴더의 Code.exe 를 직접 실행한다
         foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
         {
-            var cmd = dir.Length == 0 ? "" : Path.Combine(dir, "code.cmd");
-            if (cmd.Length > 0 && File.Exists(cmd))
+            if (dir.Length == 0 || !File.Exists(Path.Combine(dir, "code.cmd")))
             {
-                list.Add(new Editor("vscode", "VS Code", cmd));
+                continue;
+            }
+            var exe = Path.GetFullPath(Path.Combine(dir, "..", "Code.exe"));
+            if (File.Exists(exe))
+            {
+                list.Add(new Editor("vscode", "VS Code", exe));
                 break;
             }
         }

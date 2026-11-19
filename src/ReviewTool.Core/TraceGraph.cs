@@ -24,6 +24,9 @@ public sealed class TraceGraph
     // 신선도 확인용: 분석에 쓴 입력 파일(소스·프로젝트 파일)과 대상 설정의 지문.
     public List<InputFile> Inputs { get; set; } = [];
     public string ConfigHash { get; set; } = "";
+
+    // 노드의 Signature/BodyHash 를 만든 방식(CodeFingerprint.Version). 0 = 지문 없음(옛 결과).
+    public int FingerprintVersion { get; set; }
 }
 
 public sealed class EntryPoint

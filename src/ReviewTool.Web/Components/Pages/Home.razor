@@ -276,9 +276,8 @@
             </section>
 
             <section class="pane stack">
-                @if (impact is not null)
+                @if (impact is not null && graph.Nodes.TryGetValue(impact.TargetId, out var target_))
                 {
-                    var target_ = graph.Nodes[impact.TargetId];
                     <article class="impact">
                         <div class="frame-head">
                             <span class="ico" style="--icon: url('lib/lucide/radar.svg')"></span>
@@ -300,7 +299,7 @@
                                         <span class="label">@h.Entry.Label</span>
                                         <span class="sub">@h.Entry.Group</span>
                                     </button>
-                                    <span class="path">@string.Join(" → ", h.Path.Select(p => ShortName(graph.Nodes[p].Name)))</span>
+                                    <span class="path">@string.Join(" → ", h.Path.Select(p => graph.Nodes.TryGetValue(p, out var pn) ? ShortName(pn.Name) : "?"))</span>
                                 </li>
                             }
                         </ul>
@@ -440,11 +439,7 @@
         target = Workspace.ListTargets().FirstOrDefault();
         Load();
         Workspace.Changed += OnWorkspaceChanged;
-        freshnessTimer = new Timer(_ => InvokeAsync(() =>
-        {
-            RefreshFreshness();
-            StateHasChanged();
-        }), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+        freshnessTimer = new Timer(_ => RefreshFreshness(), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 
     private void OnWorkspaceChanged() => InvokeAsync(() =>
@@ -462,11 +457,24 @@
     private bool showFreshness;
     private Timer? freshnessTimer;
 
+    // 검사는 백그라운드(공유)에서 하고 결과 반영만 화면 스레드에서. 그사이 대상이 바뀌었으면 버린다.
     private void RefreshFreshness()
     {
-        freshness = target is null || graph is null || Workspace.RunningTarget is not null
-            ? null
-            : Workspace.CheckFreshness(target);
+        var checkTarget = target;
+        var checkGraph = graph;
+        if (checkTarget is null || checkGraph is null || Workspace.RunningTarget is not null)
+        {
+            _ = InvokeAsync(() => freshness = null);
+            return;
+        }
+        _ = Workspace.CheckFreshnessAsync(checkTarget).ContinueWith(t => InvokeAsync(() =>
+        {
+            if (t.IsCompletedSuccessfully && target == checkTarget && ReferenceEquals(graph, checkGraph))
+            {
+                freshness = t.Result;
+                StateHasChanged();
+            }
+        }), TaskScheduler.Default);
     }
 
     private bool FileChanged(string relativeFile) => freshness?.IsChanged(relativeFile) == true;
@@ -758,6 +766,12 @@
     private void Load()
     {
         var loaded = target is null ? null : Workspace.Get(target);
+        if (!ReferenceEquals(graph, loaded?.Graph))
+        {
+            // 다른 대상·새 분석이면 이전 그래프로 계산한 결과는 버린다(없는 노드를 가리킬 수 있음)
+            impact = null;
+            freshness = null;
+        }
         graph = loaded?.Graph;
         index = loaded?.Index;
         if (selectedEntry is not null && graph?.EntryPoints.FirstOrDefault(e => e.NodeId == selectedEntry.NodeId) is { } same)
@@ -908,6 +922,11 @@
 
     private void OpenImpactPath(ImpactAnalyzer.ImpactedEntry hit)
     {
+        if (graph is null || hit.Path.Any(p => !graph.Nodes.ContainsKey(p)))
+        {
+            impact = null;
+            return;
+        }
         selectedEntry = hit.Entry;
         expanded.Clear();
         SelectPath([.. hit.Path]);
