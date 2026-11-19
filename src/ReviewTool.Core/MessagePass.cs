@@ -209,6 +209,7 @@ public static partial class MessagePass
         var receivers = graph.Messages.Where(m => m.Role == MessageRole.Receive && inProcess.Contains(m.Channel))
             .GroupBy(m => (m.Channel, m.Key)).ToDictionary(g => g.Key, g => g.Select(m => m.NodeId).Distinct().ToList());
         var existing = graph.Edges.Select(e => (e.From, e.To)).ToHashSet();
+        var made = new Dictionary<(string, string), TraceEdge>();
         var linked = 0;
         foreach (var send in graph.Messages.Where(m => m.Role == MessageRole.Send && inProcess.Contains(m.Channel)).ToList())
         {
@@ -216,18 +217,18 @@ public static partial class MessagePass
             {
                 continue;
             }
+            // 보낸 쪽 프로세스를 알면 같은 프로세스의 받는 곳만. 모르는 공용 코드(또는 프로세스 구분 없는 대상)만 전부.
             var from = processes.Of(send.NodeId);
-            var same = targets.Where(t => processes.Of(t) == from).ToList();
-            foreach (var to in same.Count > 0 ? same : targets)
+            var chosen = from.Length > 0 ? targets.Where(t => processes.Of(t) == from).ToList() : targets;
+            foreach (var to in chosen)
             {
-                var edge = graph.Edges.FirstOrDefault(e => e.From == send.NodeId && e.To == to && e.Resolution == "Message");
-                if (edge is null)
+                if (!made.TryGetValue((send.NodeId, to), out var edge))
                 {
                     if (!existing.Add((send.NodeId, to)))
                     {
                         continue;   // 이미 정적 호출로 이어져 있음
                     }
-                    edge = new TraceEdge { From = send.NodeId, To = to, Resolution = "Message" };
+                    edge = made[(send.NodeId, to)] = new TraceEdge { From = send.NodeId, To = to, Resolution = "Message" };
                     graph.Edges.Add(edge);
                     linked++;
                 }

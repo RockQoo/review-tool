@@ -312,7 +312,7 @@
             {
                 if (nameToId.TryGetValue(l.From, out var a) && nameToId.TryGetValue(l.To, out var b))
                 {
-                    elements.Add(new { data = new { id = $"{a}-{b}-c", source = a, target = b, label = "", width = 0.8 }, classes = l.Kind == "guess" ? "guess" : "call" });
+                    elements.Add(new { data = new { id = $"{a}-{b}-{l.Kind}", source = a, target = b, label = "", width = 0.8 }, classes = l.Kind == "guess" ? "guess" : "call" });
                     edges++;
                 }
             }
@@ -354,7 +354,7 @@
 
     private static string Clip(string s) => s.Length > 56 ? s[..55] + "…" : s;
 
-    private static string Short(string name) => name.Contains("::") && !name.StartsWith('[') ? name.Split("::")[^1] : name;
+    private static string Short(string name) => SystemMap.DisplayName(name);
 
     [JSInvokable]
     public Task OnMapNodeClick(string id) => InvokeAsync(() =>

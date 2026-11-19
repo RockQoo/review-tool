@@ -215,7 +215,8 @@ public class GameServerViewTests
 
         // Gate 에서 시작한 흐름이 패킷을 타고 World·Zone 까지 간다
         Assert.Equal(["Gate", "Player", "World", "Zone"], SystemMap.ClassesOnFlow(g, new TraceIndex(g), "G").Order(StringComparer.Ordinal).ToList());
-        Assert.Equal("[main.cpp]", SystemMap.ClassOf(new TraceNode { Name = "main", File = "x/main.cpp", Kind = NodeKind.Function }));
+        Assert.Equal("[x/main.cpp]", SystemMap.ClassOf(new TraceNode { Name = "main", File = "x/main.cpp", Kind = NodeKind.Function }));
+        Assert.Equal("[main.cpp]", SystemMap.DisplayName("[x/main.cpp]"));
         Assert.Equal("Ns::Box", SystemMap.ClassOf(new TraceNode { Name = "Ns::Box<T>::Get", Kind = NodeKind.Method }));
     }
 
@@ -238,5 +239,78 @@ public class GameServerViewTests
         // 프로젝트 폴더가 없으면 진입점 파일들의 공통 폴더 아래 첫 폴더
         Assert.Equal("Zone / Player", CppTraceAnalyzer.MakeGroup("Server/Zone/Player.cpp", "Player", "Server/", new HashSet<string>()));
         Assert.Equal("Player", CppTraceAnalyzer.MakeGroup("Src/Player.cpp", "Player", "Src/", new HashSet<string>()));
+    }
+
+    [Fact]
+    public void 같은_이름이라도_다른_통로의_받는_곳과는_잇지_않는다()
+    {
+        var g = TwoHops();
+        g.Channels.Add(new ChannelInfo { Name = "다른 통로", CrossProcess = true });
+        g.Messages.Add(new MessageSite { Channel = "다른 통로", Key = "W2ZA", Role = MessageRole.Receive, NodeId = "B",
+                                         Site = new SourceRef { File = "Zone/Src/Player.cpp", Line = 70 }, How = "등록" });
+        var down = new Journey(g, new TraceIndex(g)).Build("W").Downstream;
+        Assert.DoesNotContain(down.Children, c => c.NodeId == "B");
+        Assert.Contains(down.Children, c => c.NodeId == "S");
+    }
+
+    [Fact]
+    public void 여러_case_에서_부르는_공통_함수는_case_마다_따로_거슬러_올라간다()
+    {
+        var g = TwoHops();
+        g.Nodes["H"] = new TraceNode { Id = "H", Name = "Zone::Helper", File = "Zone/Src/Zone.cpp", StartLine = 80, EndLine = 82, Kind = NodeKind.Method, Code = "a\nb\nc" };
+        g.Edges.Add(new TraceEdge { From = "S", To = "H", CallSites = [new SourceRef { Line = 42 }, new SourceRef { Line = 46 }] });
+        var up = new Journey(g, new TraceIndex(g)).Build("H").Upstream;
+        Assert.Equal(["W2ZA", "W2ZB"], up.Children.Select(c => c.Key).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void 여정은_전체_상한을_넘지_않는다()
+    {
+        var g = new TraceGraph { Channels = [new ChannelInfo { Name = "p", CrossProcess = true }] };
+        g.Nodes["R"] = new TraceNode { Id = "R", Name = "Root::Go", File = "A/r.cpp", StartLine = 1, EndLine = 2, Kind = NodeKind.Method, Code = "x\ny" };
+        g.EntryPoints.Add(new EntryPoint { NodeId = "R", Label = "Go", Group = "A / Root" });
+        // R 이 X0..X49 를 보내고, 각 Xi 를 받는 함수가 20개씩 → 1000개
+        for (var i = 0; i < 50; i++)
+        {
+            g.Messages.Add(new MessageSite { Channel = "p", Key = $"X{i}", Role = MessageRole.Send, NodeId = "R", Site = new SourceRef { File = "A/r.cpp", Line = 2 } });
+            for (var j = 0; j < 20; j++)
+            {
+                var id = $"H{i}_{j}";
+                g.Nodes[id] = new TraceNode { Id = id, Name = $"B::H{i}_{j}", File = "B/h.cpp", StartLine = 1, EndLine = 1, Kind = NodeKind.Method, Code = "x" };
+                g.Messages.Add(new MessageSite { Channel = "p", Key = $"X{i}", Role = MessageRole.Receive, NodeId = id, How = "등록", Site = new SourceRef { File = "B/h.cpp", Line = 1 } });
+            }
+        }
+        int Count(JourneyNode n) => 1 + n.Children.Sum(Count);
+        var r = new Journey(g, new TraceIndex(g)).Build("R");
+        Assert.True(Count(r.Downstream) <= Journey.MaxNodes + 5, $"{Count(r.Downstream)}");
+        Assert.Equal(JourneyKind.Cut, r.Downstream.Children[^1].Kind);
+    }
+
+    [Fact]
+    public void 같은_프로세스_메시지는_다른_프로세스의_핸들러로_잇지_않는다()
+    {
+        var root = Directory.CreateTempSubdirectory("rt-msg").FullName;
+        try
+        {
+            var g = new TraceGraph();
+            void Node(string id, string name, string file, string code) =>
+                g.Nodes[id] = new TraceNode { Id = id, Name = name, File = file, StartLine = 1, EndLine = code.Split('\n').Length, Kind = NodeKind.Method, Code = code };
+            Node("A", "A::Send", "AServer/a.cpp", "void A::Send()\n{\n    PushMsg(EMsg::Tick, 1);\n}");
+            Node("B", "B::OnTick", "BServer/b.cpp", "void B::OnTick()\n{\n}");
+            g.EntryPoints.Add(new EntryPoint { NodeId = "A", Label = "Go", Group = "AServer / A" });
+            g.EntryPoints.Add(new EntryPoint { NodeId = "B", Label = "EMsg::Tick", Group = "BServer / B", Detector = "lane" });
+            var config = new TargetConfig
+            {
+                Root = root, Tags = [],
+                Channels = [new MessageChannel { Name = "lane", CrossProcess = false, Send = @"\bPushMsg\b", Key = @"\b(?<key>E\w+::\w+)" }],
+            };
+            var result = MessagePass.Run(config, g, _ => []);
+            Assert.Equal(0, result.Linked);                      // AServer 의 Tick 을 BServer 핸들러로 잇지 않는다
+            Assert.DoesNotContain(g.Edges, e => e.Resolution == "Message");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
     }
 }

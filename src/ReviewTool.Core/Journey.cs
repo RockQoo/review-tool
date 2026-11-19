@@ -54,7 +54,7 @@ public sealed class Journey
     private sealed record Rp(string NodeId, MessageSite? Site)
     {
         public string Key => Site?.Key ?? "";
-        public string Id => NodeId + "|" + Key;
+        public string Id => NodeId + "|" + (Site?.Channel ?? "") + "|" + Key;
     }
 
     private readonly TraceGraph graph_;
@@ -63,8 +63,8 @@ public sealed class Journey
     private readonly HashSet<string> cross_;
     private readonly Dictionary<string, List<MessageSite>> receivesByNode_;
     private readonly Dictionary<string, List<MessageSite>> sendsByNode_;
-    private readonly Dictionary<string, List<MessageSite>> sendsByKey_;
-    private readonly Dictionary<string, List<MessageSite>> receiversByKey_;
+    private readonly Dictionary<(string Channel, string Key), List<MessageSite>> sendsByKey_;
+    private readonly Dictionary<(string Channel, string Key), List<MessageSite>> receiversByKey_;
     private readonly HashSet<string> entryNodes_;
     private int count_;
 
@@ -77,8 +77,8 @@ public sealed class Journey
         var messages = graph.Messages.Where(m => cross_.Contains(m.Channel) && graph.Nodes.ContainsKey(m.NodeId)).ToList();
         receivesByNode_ = messages.Where(m => m.Role == MessageRole.Receive).GroupBy(m => m.NodeId).ToDictionary(g => g.Key, g => g.ToList());
         sendsByNode_ = messages.Where(m => m.Role == MessageRole.Send).GroupBy(m => m.NodeId).ToDictionary(g => g.Key, g => g.ToList());
-        sendsByKey_ = messages.Where(m => m.Role == MessageRole.Send).GroupBy(m => m.Key).ToDictionary(g => g.Key, g => g.ToList());
-        receiversByKey_ = messages.Where(m => m.Role == MessageRole.Receive).GroupBy(m => m.Key)
+        sendsByKey_ = messages.Where(m => m.Role == MessageRole.Send).GroupBy(m => (m.Channel, m.Key)).ToDictionary(g => g.Key, g => g.ToList());
+        receiversByKey_ = messages.Where(m => m.Role == MessageRole.Receive).GroupBy(m => (m.Channel, m.Key))
             .ToDictionary(g => g.Key, g => g.GroupBy(m => m.NodeId).Select(x => x.First()).ToList());
         entryNodes_ = graph.EntryPoints.Select(e => e.NodeId).ToHashSet();
     }
@@ -150,7 +150,11 @@ public sealed class Journey
                 {
                     path.Add(cur);
                 }
-                result.Add((new Rp(id, SiteAt(id, FirstCallLine(id, path[1]))), path));
+                // 여러 case 에서 같은 함수를 부르면 case 마다 따로(각각 다른 메시지로 들어온 길이다)
+                foreach (var site in index_.CallLines(id, path[1]).Select(l => SiteAt(id, l)).DistinctBy(s => s?.Key))
+                {
+                    result.Add((new Rp(id, site), path));
+                }
                 continue;
             }
             foreach (var caller in index_.Callers.GetValueOrDefault(id) ?? [])
@@ -164,16 +168,20 @@ public sealed class Journey
         return result;
     }
 
-    // 함수 주소만 넘긴 선(핸들러 등록)은 실행 흐름이 아니라 따라가지 않는다
+    // 함수 주소만 넘긴 선(핸들러 등록)은 실행 흐름이 아니라 따라가지 않는다. 판정은 선마다 한 번만.
     private readonly Dictionary<(string, string), bool> calls_ = [];
 
     private bool Calls(string from, string to)
     {
-        if (!calls_.TryGetValue((from, to), out var yes))
+        if (calls_.Count == 0)
         {
-            yes = calls_[(from, to)] = index_.ChildrenOf(from).Any(e => e.To == to && !TraceQueries.IsAddressOnly(graph_, e));
+            foreach (var e in graph_.Edges)
+            {
+                var real = !TraceQueries.IsAddressOnly(graph_, e);
+                calls_[(e.From, e.To)] = calls_.GetValueOrDefault((e.From, e.To)) || real;
+            }
         }
-        return yes;
+        return calls_.GetValueOrDefault((from, to));
     }
 
     private List<(Rp Rp, List<string> Path)> AboveOrSelf(string nodeId, int line) =>
@@ -235,7 +243,7 @@ public sealed class Journey
 
     private sealed record LinkInfo(string Key, MessageSite? Sender, IReadOnlyList<string> Path);
 
-    private JourneyNode Marker(JourneyKind kind, Rp? rp, LinkInfo? info) => new()
+    private JourneyNode Marker(JourneyKind kind, Rp? rp, LinkInfo? info) => CountMarker(new()
     {
         Kind = kind,
         Key = rp?.Key ?? "",
@@ -247,7 +255,28 @@ public sealed class Journey
         SentHow = info?.Sender?.How ?? "",
         SenderProcess = info?.Sender is { } s ? processes_.Of(s.NodeId) : "",
         Path = info?.Path ?? [],
-    };
+    });
+
+    private JourneyNode CountMarker(JourneyNode marker)
+    {
+        count_++;
+        return marker;
+    }
+
+    // 자식 하나를 더한다. 전체 상한을 넘었으면 "자름" 하나만 남기고 false(형제 탐색을 멈춘다).
+    private bool Add(JourneyNode parent, Func<JourneyNode> make)
+    {
+        if (count_ >= MaxNodes)
+        {
+            if (parent.Children.LastOrDefault()?.Kind != JourneyKind.Cut)
+            {
+                parent.Children.Add(new JourneyNode { Kind = JourneyKind.Cut });
+            }
+            return false;
+        }
+        parent.Children.Add(make());
+        return true;
+    }
 
     private JourneyNode BuildUp(Rp rp, LinkInfo? info, HashSet<string> onPath, int depth, HashSet<string> expanded)
     {
@@ -263,15 +292,18 @@ public sealed class Journey
             return station;
         }
         // 1) 이 이름을 직접 보낸 곳(클라이언트 도구·다른 프로세스)
-        var senders = rp.Key.Length > 0 ? sendsByKey_.GetValueOrDefault(rp.Key) ?? [] : [];
+        var senders = rp.Site is { Key.Length: > 0 } site ? sendsByKey_.GetValueOrDefault((site.Channel, site.Key)) ?? [] : [];
         foreach (var s in senders.GroupBy(s => s.NodeId).Select(g => g.First()).Take(12))
         {
             foreach (var (p, path) in AboveOrSelf(s.NodeId, s.Site.Line))
             {
                 var childInfo = new LinkInfo(rp.Key, s, path);
-                station.Children.Add(onPath.Contains(p.Id)
-                    ? Marker(JourneyKind.Repeat, p, childInfo)
-                    : BuildUp(p, childInfo, [.. onPath, rp.Id], depth + 1, expanded));
+                if (!Add(station, () => onPath.Contains(p.Id)
+                        ? Marker(JourneyKind.Repeat, p, childInfo)
+                        : BuildUp(p, childInfo, [.. onPath, rp.Id], depth + 1, expanded)))
+                {
+                    return station;
+                }
             }
         }
         // 2) 같은 프로세스에서 이 함수를 부르는 받는 곳(중계 봉투를 연 곳 등). 보낸 곳이 따로 있으면
@@ -283,9 +315,12 @@ public sealed class Journey
                 continue;
             }
             var childInfo = new LinkInfo("", null, path);
-            station.Children.Add(onPath.Contains(p.Id)
-                ? Marker(JourneyKind.Repeat, p, childInfo)
-                : BuildUp(p, childInfo, [.. onPath, rp.Id], depth + 1, expanded));
+            if (!Add(station, () => onPath.Contains(p.Id)
+                    ? Marker(JourneyKind.Repeat, p, childInfo)
+                    : BuildUp(p, childInfo, [.. onPath, rp.Id], depth + 1, expanded)))
+            {
+                return station;
+            }
         }
         if (station.Children.Count == 0)
         {
@@ -328,19 +363,24 @@ public sealed class Journey
         {
             var path = PathTo(parent, s.NodeId);
             var childInfo = new LinkInfo(s.Key, s, path);
-            var receivers = receiversByKey_.GetValueOrDefault(s.Key) ?? [];
+            var receivers = receiversByKey_.GetValueOrDefault((s.Channel, s.Key)) ?? [];
             if (receivers.Count == 0)
             {
-                count_++;
-                station.Children.Add(Marker(JourneyKind.Exit, null, childInfo));
+                if (!Add(station, () => Marker(JourneyKind.Exit, null, childInfo)))
+                {
+                    return station;
+                }
                 continue;
             }
             foreach (var r in receivers)
             {
                 var next = new Rp(r.NodeId, r);
-                station.Children.Add(onPath.Contains(next.Id)
-                    ? Marker(JourneyKind.Repeat, next, childInfo)
-                    : BuildDown(next, childInfo, [.. onPath, rp.Id], depth + 1, expanded));
+                if (!Add(station, () => onPath.Contains(next.Id)
+                        ? Marker(JourneyKind.Repeat, next, childInfo)
+                        : BuildDown(next, childInfo, [.. onPath, rp.Id], depth + 1, expanded)))
+                {
+                    return station;
+                }
             }
         }
         return station;

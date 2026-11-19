@@ -10,7 +10,7 @@ public static class SystemMap
 
     public sealed record Result(IReadOnlyList<string> Processes, IReadOnlyList<ClassBox> Classes, IReadOnlyList<Link> Links);
 
-    // 클래스 이름: Ns::Class::Method → Ns::Class. 클래스 밖 함수는 [파일 이름].
+    // 클래스 이름: Ns::Class::Method → Ns::Class. 클래스 밖 함수는 [상대 경로].
     public static string ClassOf(TraceNode node)
     {
         if (node.Kind == NodeKind.External)
@@ -23,8 +23,13 @@ public static class SystemMap
         {
             return name[..cut];
         }
-        return "[" + System.IO.Path.GetFileName(node.File) + "]";
+        return "[" + node.File + "]";   // 프로세스마다 있는 main.cpp 가 합쳐지지 않게 경로째
     }
+
+    // 화면용 짧은 이름: Ns::Class → Class, [Server/Zone/main.cpp] → [main.cpp]
+    public static string DisplayName(string classId) =>
+        classId.StartsWith('[') ? "[" + System.IO.Path.GetFileName(classId.Trim('[', ']')) + "]"
+        : classId.Contains("::") ? classId.Split("::")[^1] : classId;
 
     private static string StripTemplate(string name)
     {
@@ -87,14 +92,14 @@ public static class SystemMap
         }
         var cross = graph.Channels.Where(c => c.CrossProcess).Select(c => c.Name).ToHashSet();
         var receivers = graph.Messages.Where(m => m.Role == MessageRole.Receive && cross.Contains(m.Channel))
-            .GroupBy(m => m.Key).ToDictionary(g => g.Key, g => g.Select(m => m.NodeId).Distinct().ToList());
+            .GroupBy(m => (m.Channel, m.Key)).ToDictionary(g => g.Key, g => g.Select(m => m.NodeId).Distinct().ToList());
         foreach (var s in graph.Messages.Where(m => m.Role == MessageRole.Send && cross.Contains(m.Channel)))
         {
             if (!classOf.TryGetValue(s.NodeId, out var from))
             {
                 continue;
             }
-            foreach (var r in receivers.GetValueOrDefault(s.Key) ?? [])
+            foreach (var r in receivers.GetValueOrDefault((s.Channel, s.Key)) ?? [])
             {
                 if (classOf.TryGetValue(r, out var to))
                 {
