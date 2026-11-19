@@ -13,3 +13,5 @@ QA-LOG.md
 targets/*.json
 review.md
 PERF-LOG.md
+# 데스크톱 exe 게시 결과(tools/publish-desktop.ps1)
+dist/

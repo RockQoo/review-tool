@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- 데스크톱 창: 화면 서버를 같은 프로세스에서 127.0.0.1 빈 포트로 띄우고 WebView2 로 보여 준다.
+       단일 exe 게시: tools/publish-desktop.ps1 -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>ReviewTool.Desktop</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
+    <ProjectReference Include="..\ReviewTool.Web\ReviewTool.Web.csproj" />
+  </ItemGroup>
+
+  <!-- WebView2 패키지는 .NET 5+ 에서 WPF 컨트롤 dll 도 참조한다(WindowsBase 버전 충돌 경고). WinForms 만 쓰므로 뺀다. -->
+  <Target Name="DropWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- 단일 exe: 화면 파일(wwwroot + staticwebassets.endpoints.json)을 zip 으로 넣는다(tools/publish-desktop.ps1 이 만든다).
+       Web SDK 는 정적 파일을 단일 exe 묶음에서 빼므로, 실행할 때 사용자 폴더에 풀어 쓴다(WebAssets.cs). -->
+  <ItemGroup Condition="'$(WebAssetsZip)' != ''">
+    <EmbeddedResource Include="$(WebAssetsZip)" LogicalName="webassets.zip" />
+  </ItemGroup>
+
+</Project>
