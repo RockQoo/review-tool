@@ -103,10 +103,31 @@ public sealed class AiAssistant(ILogger<AiAssistant> logger)
             }
         });
         var finished = false;
+        // 입력 쓰기와 출력 읽기를 함께 진행한다. 입력(문맥)이 파이프보다 크고 CLI 가 먼저 출력을 채우면
+        // 순서대로 하면 서로 기다리며 멈춘다.
+        var inTask = Task.Run(async () =>
+        {
+            try
+            {
+                await process.StandardInput.WriteAsync(prompt.AsMemory(), ct);
+            }
+            catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException)
+            {
+                // 프로세스가 먼저 끝났거나 취소: 출력 쪽에서 결과로 알린다
+            }
+            finally
+            {
+                try
+                {
+                    process.StandardInput.Close();
+                }
+                catch (IOException)
+                {
+                }
+            }
+        });
         try
         {
-            await process.StandardInput.WriteAsync(prompt);
-            process.StandardInput.Close();
             while (await process.StandardOutput.ReadLineAsync() is { } line)
             {
                 foreach (var ev in provider.Parse(line))
@@ -117,6 +138,7 @@ public sealed class AiAssistant(ILogger<AiAssistant> logger)
             }
             await process.WaitForExitAsync(CancellationToken.None);
             await errTask;
+            await inTask;
             if (ct.IsCancellationRequested)
             {
                 writer.TryWrite(new AiEvent(AiEventKind.Error, "중단했습니다."));

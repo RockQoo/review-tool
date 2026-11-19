@@ -75,7 +75,7 @@
                     </details>
                 }
                 @* MiniMarkdown 이 먼저 전부 이스케이프한다: 답 안의 HTML 은 글자로만 보인다 *@
-                <div class="answer-text">@((MarkupString)MiniMarkdown.ToHtml(answer))</div>
+                <div class="answer-text">@((MarkupString)answerHtml)</div>
                 @if (error is not null)
                 {
                     <div class="note warn">@error</div>
@@ -173,7 +173,7 @@
         running = true;
         askedQuestion = question.Trim();
         askedFlow = string.Join(" → ", Path.Where(Graph.Nodes.ContainsKey).Select(id => TraceQueries.ShortName(Graph.Nodes[id].Name)));
-        answer = "";
+        SetAnswer("");
         error = null;
         tools.Clear();
         cts?.Dispose();
@@ -181,6 +181,8 @@
         var prompt = FlowContext.Prompt(Context(), askedQuestion);
         var lastRender = DateTime.MinValue;
         var afterTool = false;
+        // 조각은 StringBuilder 에 모으고, 문자열·HTML 은 화면을 갱신할 때만 만든다
+        var buffer = new System.Text.StringBuilder();
         try
         {
             await foreach (var ev in Ai.AskAsync(providerId, prompt, Graph.RootDirectory, cts.Token))
@@ -189,12 +191,12 @@
                 {
                     case AiEventKind.Text:
                         // 도구를 쓰고 난 뒤의 글은 새 문단(안 그러면 "보겠습니다.세 파일"처럼 붙는다)
-                        if (afterTool && answer.Length > 0 && !answer.EndsWith('\n'))
+                        if (afterTool && buffer.Length > 0 && buffer[^1] != '\n')
                         {
-                            answer += "\n\n";
+                            buffer.Append("\n\n");
                         }
                         afterTool = false;
-                        answer += ev.Text;
+                        buffer.Append(ev.Text);
                         break;
                     case AiEventKind.Tool:
                         tools.Add(ev.Text);
@@ -208,6 +210,7 @@
                 if (DateTime.UtcNow - lastRender > TimeSpan.FromMilliseconds(100))
                 {
                     lastRender = DateTime.UtcNow;
+                    SetAnswer(buffer.ToString());
                     StateHasChanged();
                     await Task.Yield();
                 }
@@ -216,8 +219,16 @@
         finally
         {
             running = false;
-            answer = answer.Trim();
+            SetAnswer(buffer.ToString().Trim());
         }
+    }
+
+    private string answerHtml = "";
+
+    private void SetAnswer(string text)
+    {
+        answer = text;
+        answerHtml = MiniMarkdown.ToHtml(text);
     }
 
     public async ValueTask DisposeAsync()

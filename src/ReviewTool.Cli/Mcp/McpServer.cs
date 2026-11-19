@@ -45,25 +45,33 @@ public sealed class McpServer(McpTools tools, TextReader input, TextWriter outpu
         {
             return Error(null, -32600, "요청 형식이 아닙니다");
         }
+        // 구분: method 가 있으면 요청(id 있음) 또는 알림(id 없음), method 없이 result/error 가 있으면 응답.
+        var hasId = msg.ContainsKey("id");
         var id = msg["id"]?.DeepClone();
-        var method = msg["method"] is JsonValue m && m.TryGetValue<string>(out var s) ? s : null;
-        if (method is null)
+        if (!msg.ContainsKey("method"))
         {
-            return null;   // 응답(우리는 요청을 보내지 않는다)
+            // 응답은 무시한다(우리는 요청을 보내지 않는다). 둘 다 아니면 잘못된 요청.
+            return msg.ContainsKey("result") || msg.ContainsKey("error") || !hasId ? null : Error(id, -32600, "method 가 없습니다");
         }
-        var isRequest = msg.ContainsKey("id");
+        if (msg["method"] is not JsonValue m || !m.TryGetValue<string>(out var method))
+        {
+            return hasId ? Error(id, -32600, "method 는 문자열이어야 합니다") : null;
+        }
+        if (!hasId)
+        {
+            return null;   // 알림(notifications/initialized 등): 성공이든 실패든 답하지 않는다. 도구도 실행하지 않는다.
+        }
         try
         {
-            JsonNode? result = method switch
+            JsonNode result = method switch
             {
                 "initialize" => Initialize(msg["params"] as JsonObject),
                 "ping" => new JsonObject(),
                 "tools/list" => new JsonObject { ["tools"] = tools.List() },
                 "tools/call" => Call(msg["params"] as JsonObject),
-                _ when !isRequest => null,      // notifications/initialized 등
                 _ => throw new MethodNotFound(method),
             };
-            return isRequest ? new JsonObject { ["jsonrpc"] = "2.0", ["id"] = id, ["result"] = result ?? new JsonObject() } : null;
+            return new JsonObject { ["jsonrpc"] = "2.0", ["id"] = id, ["result"] = result };
         }
         catch (MethodNotFound ex)
         {

@@ -112,6 +112,27 @@ public class AiLinkTests
     }
 
     [Fact]
+    public void 깊이_제한으로_못_펼친_노드는_더_얕은_경로에서_펼친다()
+    {
+        // R → A → B → C, R → B  (maxDepth 2: 첫 경로의 B 는 깊이 2 라 C 를 못 펼침, 두 번째 R → B 는 깊이 1 이라 펼침)
+        var g = new TraceGraph();
+        foreach (var id in new[] { "R", "A", "B", "C" })
+        {
+            g.Nodes[id] = new TraceNode { Id = id, Name = id, File = "f.cpp", StartLine = 1 };
+        }
+        foreach (var (f, t) in new[] { ("R", "A"), ("A", "B"), ("B", "C"), ("R", "B") })
+        {
+            g.Edges.Add(new TraceEdge { From = f, To = t });
+        }
+
+        var tree = TraceQueries.CallTreeText(g, new TraceIndex(g), "R", maxDepth: 2);
+
+        Assert.Contains("깊이 2 에서 자름", tree);
+        Assert.Contains("    - C  (f.cpp:1)", tree);      // R → B → C (깊이 2)
+        Assert.DoesNotContain("(위에서 펼침)", tree);
+    }
+
+    [Fact]
     public void Claude_스트림_해석()
     {
         var lines = new[]
@@ -234,6 +255,43 @@ public class AiLinkTests
 
         Assert.Equal(-32601, f.Rpc("nope")["error"]!["code"]!.GetValue<int>());
         Assert.Equal(-32700, f.Server.Handle("not json")!["error"]!["code"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void MCP_요청_알림_응답_구분()
+    {
+        using var f = new McpFixture();
+        // method 가 문자열이 아닌 요청 → -32600 (응답으로 착각해 무시하지 않음)
+        Assert.Equal(-32600, f.Server.Handle("""{"jsonrpc":"2.0","id":7,"method":42}""")!["error"]!["code"]!.GetValue<int>());
+        Assert.Equal(-32600, f.Server.Handle("""{"jsonrpc":"2.0","id":8}""")!["error"]!["code"]!.GetValue<int>());
+        // 알림은 실패해도 답하지 않는다
+        Assert.Null(f.Server.Handle("""{"jsonrpc":"2.0","method":"tools/call","params":{}}"""));
+        Assert.Null(f.Server.Handle("""{"jsonrpc":"2.0","method":42}"""));
+        // 클라이언트가 보낸 응답은 무시
+        Assert.Null(f.Server.Handle("""{"jsonrpc":"2.0","id":9,"result":{}}"""));
+    }
+
+    [Fact]
+    public void MCP_는_폴더를_만들지_않고_루트가_바뀌면_거부()
+    {
+        using var f = new McpFixture();
+        var targetData = Path.Combine(f.Root, "data", "t");
+        f.CallTool("list_targets", []);
+        Assert.True(f.CallTool("compare", new JsonObject { ["target"] = "t" }).IsError);
+        Assert.False(Directory.Exists(Path.Combine(targetData, "snapshots")));
+
+        // 설정의 root 를 다른 폴더로 바꿈(재분석 전)
+        var other = Directory.CreateDirectory(Path.Combine(f.Root, "other")).FullName;
+        new TargetConfig { Name = "t", Root = other }.Save(Path.Combine(f.Root, "targets"), overwrite: true);
+        var (text, isError) = f.CallTool("get_entrypoints", new JsonObject { ["target"] = "t" });
+        Assert.True(isError);
+        Assert.Contains("재분석이 필요", text);
+        Assert.Contains("재분석이 필요", f.CallTool("list_targets", []).Text);
+
+        // 결과가 없는 대상: data/<대상> 폴더도 만들지 않음
+        new TargetConfig { Name = "u", Root = other }.Save(Path.Combine(f.Root, "targets"), overwrite: true);
+        f.CallTool("list_targets", []);
+        Assert.False(Directory.Exists(Path.Combine(f.Root, "data", "u")));
     }
 
     [Fact]

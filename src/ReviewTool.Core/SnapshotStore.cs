@@ -9,8 +9,11 @@ public static class SnapshotStore
 
     public sealed record Snapshot(string Id, string Label, DateTimeOffset AnalyzedAt);
 
-    public static string Directory(WorkPaths paths) =>
-        System.IO.Directory.CreateDirectory(Path.Combine(paths.Directory, "snapshots")).FullName;
+    // 읽기 전용 경로(만들지 않음)
+    public static string DirectoryPath(WorkPaths paths) => Path.Combine(paths.Directory, "snapshots");
+
+    // 쓰기용: 없으면 만든다
+    public static string Directory(WorkPaths paths) => System.IO.Directory.CreateDirectory(DirectoryPath(paths)).FullName;
 
     // 새 결과를 저장하기 직전에 부른다: 지금 trace.json 을 previous.json 으로 옮겨 둔다.
     public static void KeepPrevious(WorkPaths paths)
@@ -31,7 +34,12 @@ public static class SnapshotStore
     public static IReadOnlyList<Snapshot> List(WorkPaths paths)
     {
         var result = new List<Snapshot>();
-        foreach (var file in System.IO.Directory.EnumerateFiles(Directory(paths), "*.json"))
+        var dir = DirectoryPath(paths);
+        if (!System.IO.Directory.Exists(dir))
+        {
+            return result;
+        }
+        foreach (var file in System.IO.Directory.EnumerateFiles(dir, "*.json"))
         {
             // 목록에는 분석 시각만 필요하다. 그래프 전체(코드 포함)를 읽지 않고 앞부분의 analyzedAt 만 읽는다.
             var id = Path.GetFileNameWithoutExtension(file);
@@ -45,7 +53,7 @@ public static class SnapshotStore
     }
 
     public static TraceGraph? Load(WorkPaths paths, string id) =>
-        id.Any(c => c is '/' or '\\' or '.') ? null : TraceStore.TryLoad(Path.Combine(Directory(paths), id + ".json"));
+        id.Any(c => c is '/' or '\\' or '.') ? null : TraceStore.TryLoad(Path.Combine(DirectoryPath(paths), id + ".json"));
 
     private static string Label(string id, DateTimeOffset analyzedAt) =>
         (id == PreviousId ? "직전 분석" : "저장한 기준") + $" ({analyzedAt.ToLocalTime():MM-dd HH:mm})";

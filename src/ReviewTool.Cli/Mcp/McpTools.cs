@@ -91,7 +91,16 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
                 sb.Append("- 설정을 읽지 못함: ").Append(ex.Message).Append("\n\n");
                 continue;
             }
-            var loaded = TryGraph(name);
+            (TraceGraph Graph, TraceIndex Index)? loaded;
+            try
+            {
+                loaded = TryGraph(name);
+            }
+            catch (ToolError ex)
+            {
+                sb.Append("- ").Append(ex.Message).Append("\n\n");
+                continue;
+            }
             if (loaded is null)
             {
                 sb.Append("- 분석 결과 없음(review-tool analyze 또는 화면의 재분석)\n\n");
@@ -306,7 +315,8 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
         return TargetConfig.Load(Path.Combine(targetsDirectory, name + ".json"));
     }
 
-    private WorkPaths Paths(TargetConfig config) => new(dataRoot, config.Name);
+    // 읽기만 하므로 폴더를 만들지 않는다
+    private WorkPaths Paths(TargetConfig config) => new(dataRoot, config.Name, create: false);
 
     private (TraceGraph Graph, TraceIndex Index)? TryGraph(string name)
     {
@@ -317,24 +327,47 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
             return null;
         }
         var stamp = File.GetLastWriteTimeUtc(file);
+        TraceGraph? graph = null;
+        TraceIndex? index = null;
         lock (cache_)
         {
             if (cache_.TryGetValue(name, out var c) && c.Stamp == stamp)
             {
-                return (c.Graph, c.Index);
+                (graph, index) = (c.Graph, c.Index);
             }
         }
-        var graph = TraceStore.TryLoad(file);
         if (graph is null)
         {
-            return null;
+            graph = TraceStore.TryLoad(file);
+            if (graph is null)
+            {
+                return null;
+            }
+            index = new TraceIndex(graph);
+            lock (cache_)
+            {
+                cache_[name] = (stamp, graph, index);
+            }
         }
-        var index = new TraceIndex(graph);
-        lock (cache_)
+        // 설정의 root 를 다른 저장소로 바꾼 뒤 재분석 전이면, 옛 저장소의 결과를 이 대상의 것으로 내주지 않는다
+        if (!SameRoot(graph.RootDirectory, config.Root))
         {
-            cache_[name] = (stamp, graph, index);
+            throw new ToolError($"대상 {name} 의 설정 폴더({config.Root})와 분석 결과의 폴더({graph.RootDirectory})가 다릅니다. 재분석이 필요합니다.");
         }
-        return (graph, index);
+        return (graph, index!);
+    }
+
+    private static bool SameRoot(string a, string b)
+    {
+        try
+        {
+            return string.Equals(Path.GetFullPath(a).TrimEnd('\\', '/'), Path.GetFullPath(b).TrimEnd('\\', '/'),
+                                 OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
     }
 
     private (TraceGraph G, TraceIndex I) Target(JsonObject a)

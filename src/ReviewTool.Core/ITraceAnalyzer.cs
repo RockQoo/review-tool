@@ -17,10 +17,14 @@ public sealed record AnalysisProgress(string Stage, string Message, int Done = 0
 // 이 도구가 대상마다 쓰는 폴더. 원본 저장소가 아니라 이 도구 쪽(data/<이름>/)에 둔다.
 public sealed class WorkPaths
 {
-    public WorkPaths(string dataRoot, string targetName)
+    // create: false 면 폴더를 만들지 않는다(저장된 결과를 읽기만 하는 곳, 예: MCP).
+    public WorkPaths(string dataRoot, string targetName, bool create = true)
     {
         Directory = Path.Combine(dataRoot, targetName);
-        System.IO.Directory.CreateDirectory(Directory);
+        if (create)
+        {
+            System.IO.Directory.CreateDirectory(Directory);
+        }
     }
 
     public string Directory { get; }

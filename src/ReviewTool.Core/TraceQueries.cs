@@ -114,7 +114,7 @@ public static class TraceQueries
     public static string CallTreeText(TraceGraph graph, TraceIndex index, string rootId, int maxDepth = 4, int maxLines = 300)
     {
         var sb = new StringBuilder();
-        var expanded = new HashSet<string>();
+        var expandedAt = new Dictionary<string, int>();   // 자식을 실제로 펼친 깊이
         var lines = 0;
         var cut = false;
 
@@ -148,22 +148,27 @@ public static class TraceQueries
                 sb.Append("  [구현 후보(추정): ").Append(string.Join(", ", n.Implementations.Select(i => i.Name))).Append(']');
             }
             var children = index.ChildrenOf(id);
-            if (children.Count > 0 && !expanded.Add(id))
+            // 같은 깊이나 더 얕은 곳에서 이미 자식을 펼쳤으면 반복하지 않는다(재귀·공유 호출).
+            // 깊이 제한으로 못 펼친 것은 기록하지 않아서, 더 얕은 경로에서 다시 만나면 펼친다.
+            var repeated = children.Count > 0 && expandedAt.TryGetValue(id, out var at) && at <= depth;
+            var cutHere = children.Count > 0 && !repeated && depth + 1 > maxDepth;
+            if (repeated)
             {
                 sb.Append("  (위에서 펼침)");
-                children = [];
             }
             sb.Append("  id=").Append(id).Append('\n');
             lines++;
-            if (depth + 1 > maxDepth)
+            if (repeated || children.Count == 0)
             {
-                if (children.Count > 0)
-                {
-                    sb.Append(' ', (depth + 1) * 2).Append("… (깊이 ").Append(maxDepth).Append(" 에서 자름, 호출 ").Append(children.Count).Append("개)\n");
-                    lines++;
-                }
                 return;
             }
+            if (cutHere)
+            {
+                sb.Append(' ', (depth + 1) * 2).Append("… (깊이 ").Append(maxDepth).Append(" 에서 자름, 호출 ").Append(children.Count).Append("개)\n");
+                lines++;
+                return;
+            }
+            expandedAt[id] = depth;
             foreach (var e in children)
             {
                 Walk(e.To, depth + 1, e);
