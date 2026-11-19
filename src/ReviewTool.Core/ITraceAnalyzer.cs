@@ -7,6 +7,9 @@ public interface ITraceAnalyzer
 
     Task<TraceGraph> AnalyzeAsync(TargetConfig config, WorkPaths paths, IProgress<AnalysisProgress>? progress,
                                   CancellationToken cancellationToken);
+
+    // 분석 결과에 영향을 주는 파일들(절대 경로). 신선도 확인이 분석 때와 같은 규칙으로 다시 센다.
+    IEnumerable<string> EnumerateInputs(TargetConfig config);
 }
 
 public sealed record AnalysisProgress(string Stage, string Message, int Done = 0, int Total = 0);

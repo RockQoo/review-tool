@@ -63,6 +63,18 @@
         @if (graph is not null)
         {
             <span class="meta">
+                @if (freshness is not null)
+                {
+                    <button class="fresh fresh-@freshness.State.ToString().ToLowerInvariant()" @onclick="() => showFreshness = !showFreshness"
+                            title="분석 결과가 지금 코드와 같은지 (30초마다 확인, 분석은 돌리지 않음)">
+                        @(freshness.State switch
+                        {
+                            FreshnessState.Fresh => "● 최신",
+                            FreshnessState.Stale => $"● 바뀜 {freshness.Count}",
+                            _ => "● 확인 불가",
+                        })
+                    </button>
+                }
                 @graph.AnalyzedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm") 분석 ·
                 진입점 @graph.EntryPoints.Count · 함수 @graph.Nodes.Count · 호출 @graph.Edges.Count
                 @if (graph.Diagnostics.Count > 0)
@@ -72,6 +84,42 @@
             </span>
         }
     </header>
+
+    @if (showFreshness && freshness is not null)
+    {
+        <section class="diagnostics">
+            @if (freshness.State == FreshnessState.Fresh)
+            {
+                <p>분석에 쓴 파일 @(graph?.Inputs.Count)개가 지금과 모두 같습니다.</p>
+            }
+            else if (freshness.State == FreshnessState.Unknown)
+            {
+                <p>확인할 수 없습니다: @freshness.Reason 재분석하면 확인할 수 있게 됩니다.</p>
+            }
+            else
+            {
+                <p>분석 뒤 바뀐 것이 있습니다. 코드 스택의 줄 번호·코드가 지금과 다를 수 있습니다. <b>재분석</b>을 누르세요.</p>
+                <ul>
+                    @if (freshness.ConfigChanged)
+                    {
+                        <li>대상 설정(targets/@(target).json)이 바뀜</li>
+                    }
+                    @foreach (var f in freshness.Changed.Take(50))
+                    {
+                        <li>바뀜: @f</li>
+                    }
+                    @foreach (var f in freshness.Added.Take(50))
+                    {
+                        <li>새 파일: @f</li>
+                    }
+                    @foreach (var f in freshness.Removed.Take(50))
+                    {
+                        <li>지워짐: @f</li>
+                    }
+                </ul>
+            }
+        </section>
+    }
 
     @if (showDiagnostics && graph is not null)
     {
@@ -200,6 +248,10 @@
                             }
                             <button class="link close" title="여기까지만 보기" @onclick="() => TruncateStack(frameIndex + 1)">✕ 아래 닫기</button>
                         </div>
+                        @if (FileChanged(node.File))
+                        {
+                            <div class="note warn">이 파일은 분석 뒤 바뀌었습니다. 아래 코드와 줄 번호는 분석 당시 것입니다 — 재분석하세요.</div>
+                        }
                         @if (node.Kind == NodeKind.External)
                         {
                             <div class="note">분석 범위 밖 함수라 코드가 없습니다.</div>
@@ -272,6 +324,11 @@
         target = Workspace.ListTargets().FirstOrDefault();
         Load();
         Workspace.Changed += OnWorkspaceChanged;
+        freshnessTimer = new Timer(_ => InvokeAsync(() =>
+        {
+            RefreshFreshness();
+            StateHasChanged();
+        }), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 
     private void OnWorkspaceChanged() => InvokeAsync(() =>
@@ -283,9 +340,28 @@
         StateHasChanged();
     });
 
+    // ---- 신선도 ----
+
+    private FreshnessReport? freshness;
+    private bool showFreshness;
+    private Timer? freshnessTimer;
+
+    private void RefreshFreshness()
+    {
+        freshness = target is null || graph is null || Workspace.RunningTarget is not null
+            ? null
+            : Workspace.CheckFreshness(target);
+    }
+
+    private bool FileChanged(string relativeFile) => freshness?.IsChanged(relativeFile) == true;
+
     public async ValueTask DisposeAsync()
     {
         Workspace.Changed -= OnWorkspaceChanged;
+        if (freshnessTimer is not null)
+        {
+            await freshnessTimer.DisposeAsync();
+        }
         if (graphModule is not null)
         {
             try
@@ -571,6 +647,7 @@
             stack = [];
             expanded.Clear();
         }
+        RefreshFreshness();
     }
 
     private void OnTargetChanged(ChangeEventArgs e)

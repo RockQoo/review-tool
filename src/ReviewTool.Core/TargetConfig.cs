@@ -55,6 +55,9 @@ public sealed class TargetConfig
         return path;
     }
 
+    // 분석 결과에 영향을 주는 설정의 지문(파일 서식·주석과 무관).
+    public string ContentHash() => Freshness.HashText(JsonSerializer.Serialize(this, JsonOptions));
+
     public static TargetConfig Load(string path)
     {
         var config = JsonSerializer.Deserialize<TargetConfig>(File.ReadAllText(path), JsonOptions)

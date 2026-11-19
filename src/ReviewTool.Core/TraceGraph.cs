@@ -20,6 +20,10 @@ public sealed class TraceGraph
 
     // "못 본 것". 비어 있지 않으면 화면 상단에 그대로 보여 준다.
     public List<string> Diagnostics { get; set; } = [];
+
+    // 신선도 확인용: 분석에 쓴 입력 파일(소스·프로젝트 파일)과 대상 설정의 지문.
+    public List<InputFile> Inputs { get; set; } = [];
+    public string ConfigHash { get; set; } = "";
 }
 
 public sealed class EntryPoint

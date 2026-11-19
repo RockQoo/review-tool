@@ -139,6 +139,32 @@ public sealed class TraceWorkspace(IConfiguration configuration, IWebHostEnviron
         }
     }
 
+    public static ITraceAnalyzer AnalyzerFor(string language) => language switch
+    {
+        "cpp" => new CppTraceAnalyzer(),
+        _ => throw new NotSupportedException($"지원하지 않는 언어: {language}"),
+    };
+
+    // 분석 결과가 지금 코드와 같은지. 파일 목록·크기·시각 비교(다르면 해시)라 분석은 돌리지 않는다.
+    public FreshnessReport CheckFreshness(string name)
+    {
+        var loaded = Get(name);
+        if (loaded is null)
+        {
+            return new FreshnessReport(FreshnessState.Unknown, [], [], [], false, "분석 결과가 없습니다.");
+        }
+        try
+        {
+            var config = LoadConfig(name);
+            var inputs = AnalyzerFor(config.Language).EnumerateInputs(config);
+            return Freshness.Evaluate(loaded.Value.Graph, inputs, config.ContentHash());
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or NotSupportedException)
+        {
+            return new FreshnessReport(FreshnessState.Unknown, [], [], [], false, ex.Message);
+        }
+    }
+
     public bool StartAnalysis(string name)
     {
         lock (lock_)
@@ -159,11 +185,7 @@ public sealed class TraceWorkspace(IConfiguration configuration, IWebHostEnviron
             {
                 var config = LoadConfig(name);
                 var paths = new WorkPaths(DataDirectory, config.Name);
-                ITraceAnalyzer analyzer = config.Language switch
-                {
-                    "cpp" => new CppTraceAnalyzer(),
-                    _ => throw new NotSupportedException($"지원하지 않는 언어: {config.Language}"),
-                };
+                var analyzer = AnalyzerFor(config.Language);
                 var progress = new Progress<AnalysisProgress>(p =>
                 {
                     StatusMessage = p.Total > 0 ? $"{p.Message} ({p.Done}/{p.Total})" : p.Message;

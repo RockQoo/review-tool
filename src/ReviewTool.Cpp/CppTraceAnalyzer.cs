@@ -10,6 +10,30 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
 {
     public string Language => "cpp";
 
+    // 분석 범위의 C++ 소스·헤더 + 컴파일 옵션을 정하는 파일(vcxproj, props, compile_flags.txt).
+    // 범위 밖 헤더(3rd 등)는 "외부"로만 쓰므로 넣지 않는다.
+    public IEnumerable<string> EnumerateInputs(TargetConfig config)
+    {
+        var filter = GlobMatcher.Build(config.Include, config.Exclude);
+        foreach (var file in SourceFiles.Enumerate(config.Root, f => SourceFiles.IsCode(f) || IsBuildSetting(f), config.Exclude))
+        {
+            var rel = Path.GetRelativePath(config.Root, file).Replace('\\', '/');
+            if (IsBuildSetting(file) || filter(rel))
+            {
+                yield return file;
+            }
+        }
+    }
+
+    private static bool IsBuildSetting(string path)
+    {
+        var name = Path.GetFileName(path);
+        return name.EndsWith(".vcxproj", StringComparison.OrdinalIgnoreCase) ||
+               name.Equals("Directory.Build.props", StringComparison.OrdinalIgnoreCase) ||
+               name.Equals("Directory.Build.targets", StringComparison.OrdinalIgnoreCase) ||
+               name.Equals("compile_flags.txt", StringComparison.OrdinalIgnoreCase);
+    }
+
     public async Task<TraceGraph> AnalyzeAsync(TargetConfig config, WorkPaths paths, IProgress<AnalysisProgress>? progress,
                                                CancellationToken cancellationToken)
     {
@@ -24,6 +48,11 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
         };
 
         var filter = GlobMatcher.Build(config.Include, config.Exclude);
+
+        // 신선도용 입력 지문은 분석 "전"에 찍는다. 분석 도중 바뀐 파일은 다음 확인에서 바뀐 것으로 잡힌다.
+        progress?.Report(new AnalysisProgress("prepare", "입력 파일 기록 중"));
+        graph.Inputs = EnumerateInputs(config).Select(f => InputFile.Read(config.Root, f)).ToList();
+        graph.ConfigHash = config.ContentHash();
 
         progress?.Report(new AnalysisProgress("prepare", "컴파일 옵션 정리 중"));
         var entries = CompileDatabase.Build(config, filter, graph.Diagnostics);

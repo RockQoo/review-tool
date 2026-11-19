@@ -143,6 +143,12 @@ select, input.search {
 .graph-legend { font-size: 11px; color: var(--muted); padding: 4px 8px; border-top: 1px solid var(--border); }
 .tree-tools select { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; }
 
+.fresh { border: none; background: none; padding: 0 6px 0 0; font-size: 12px; }
+.fresh-fresh { color: #1a7f37; }
+.fresh-stale { color: var(--warn); font-weight: 600; }
+.fresh-unknown { color: var(--muted); }
+@media (prefers-color-scheme: dark) { .fresh-fresh { color: #3fb950; } }
+.note.warn { color: var(--warn); background: var(--call); }
 .editor-pick { color: var(--muted); font-size: 12px; display: inline-flex; gap: 4px; align-items: center; }
 .status.notice { cursor: pointer; color: var(--accent); }
 .line .ln { cursor: pointer; }
