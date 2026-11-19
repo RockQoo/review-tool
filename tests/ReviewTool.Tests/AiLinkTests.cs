@@ -251,7 +251,8 @@ public class AiLinkTests
         Assert.Null(f.Server.Handle("""{"jsonrpc":"2.0","method":"notifications/initialized"}"""));   // 알림엔 답하지 않음
 
         var tools = f.Rpc("tools/list")["result"]!["tools"]!.AsArray().Select(t => t!["name"]!.GetValue<string>()).ToList();
-        Assert.Equal(["list_targets", "get_entrypoints", "find_functions", "get_flow", "get_source", "get_flow_context", "get_impact", "compare"], tools);
+        Assert.Equal(["list_targets", "get_entrypoints", "find_functions", "get_flow", "get_source", "get_flow_context", "get_impact", "compare",
+                      "get_journey", "get_flow_summary", "get_system_map", "get_class"], tools);
 
         Assert.Equal(-32601, f.Rpc("nope")["error"]!["code"]!.GetValue<int>());
         Assert.Equal(-32700, f.Server.Handle("not json")!["error"]!["code"]!.GetValue<int>());
@@ -355,5 +356,18 @@ public class AiLinkTests
         Assert.Equal(2, replies.Length);
         Assert.Contains("World::Enter", replies[1]);                 // 한글·이름이 이스케이프 없이
         Assert.Equal(2, JsonNode.Parse(replies[1])!["id"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void MCP_3단계_도구는_진입점_이름으로_찾고_옛_결과엔_재분석을_안내()
+    {
+        using var f = new McpFixture();
+        // Sample 은 메시지·클래스 정보가 없는 결과(3단계 이전과 같음)
+        Assert.Contains("재분석하면 여정이 보입니다", f.CallTool("get_journey", new JsonObject { ["target"] = "t", ["entry"] = "C2SLogin" }).Text);
+        Assert.Contains("# 흐름 요약: C2SLogin (Server / Handler)", f.CallTool("get_flow_summary", new JsonObject { ["target"] = "t", ["entry"] = "C2SLogin" }).Text);
+        Assert.Contains("## 공용", f.CallTool("get_system_map", new JsonObject { ["target"] = "t" }).Text);
+        var (text, isError) = f.CallTool("get_class", new JsonObject { ["target"] = "t", ["name"] = "World" });
+        Assert.True(isError);
+        Assert.Contains("재분석", text);
     }
 }

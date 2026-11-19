@@ -1,0 +1,105 @@
+@using ReviewTool.Core
+
+@* 흐름 요약: 표시(tags)가 붙은 호출만 소스 순서대로. main 이면 시작 순서, 패킷 핸들러면 DB·캐시 접근 순서. *@
+<div class="summary">
+    @if (result is null)
+    {
+    }
+    else if (!anyTags)
+    {
+        <div class="note warn">이 분석 결과에는 표시(tags) 정보가 없습니다(3단계 이전 결과이거나 설정 tags 가 비어 있음). <b>재분석</b>하세요.</div>
+    }
+    else
+    {
+        <div class="tree-tools">
+            <span class="tags" role="group" aria-label="표시 고르기">
+                @foreach (var t in result.AllTags)
+                {
+                    var tag = t;
+                    <button class="tag-chip @(off.Contains(tag) ? "" : "on")" aria-pressed="@(off.Contains(tag) ? "false" : "true")"
+                            @onclick="() => Toggle(tag)">@tag <span class="count">@result.Items.Count(i => i.Tags.Contains(tag))</span></button>
+                }
+            </span>
+            <span class="graph-info">호출 @Visible.Count()개@(result.Cut ? " (개수 제한에서 자름)" : "")</span>
+        </div>
+        @if (result.Items.Count == 0)
+        {
+            <p class="hint-line">이 흐름에는 표시가 붙은 호출이 없습니다. 이름 규칙은 대상 설정의 tags 에서 고칩니다.</p>
+        }
+        <ol class="summary-list">
+            @foreach (var item in Visible)
+            {
+                var it = item;
+                var callee = it.CalleeId.Length > 0 ? Graph.Nodes[it.CalleeId] : null;
+                var caller = Graph.Nodes[it.CallerId];
+                <li style="--depth: @Math.Min(it.Depth, 8)">
+                    <button class="link summary-row" title="진입점에서 이 호출까지 코드 스택으로 열기" @onclick="() => OnOpen.InvokeAsync(it.Path)">
+                        @foreach (var tag in it.Tags)
+                        {
+                            <span class="badge tag">@tag</span>
+                        }
+                        @if (callee is not null)
+                        {
+                            <span class="fn">@TraceQueries.ShortName(callee.Name)</span>
+                        }
+                        else
+                        {
+                            <span class="fn" title="호출이 아니라 본문 줄이 규칙(tags 의 code)에 걸렸다">@TraceQueries.ShortName(caller.Name) 본문</span>
+                        }
+                        @if (TraceQueries.IsGuess(new TraceEdge { Resolution = it.Resolution }))
+                        {
+                            <span class="badge guess">@TraceQueries.ResolutionText(it.Resolution)</span>
+                        }
+                        <span class="loc">@caller.File:@it.Line</span>
+                    </button>
+                    @if (it.LineText.Length > 0)
+                    {
+                        <div class="src mono">@it.LineText</div>
+                    }
+                </li>
+            }
+        </ol>
+        <details class="limits">
+            <summary>이 결과가 증명하지 않는 것</summary>
+            <ul>
+                @foreach (var l in FlowSummary.Limits)
+                {
+                    <li>@l</li>
+                }
+            </ul>
+        </details>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TraceGraph Graph { get; set; } = default!;
+    [Parameter, EditorRequired] public TraceIndex Index { get; set; } = default!;
+    [Parameter, EditorRequired] public string NodeId { get; set; } = "";
+    [Parameter] public EventCallback<IReadOnlyList<string>> OnOpen { get; set; }
+
+    private FlowSummary.Result? result;
+    private bool anyTags;
+    private readonly HashSet<string> off = [];
+    private (TraceGraph, string)? builtFor;
+
+    protected override void OnParametersSet()
+    {
+        if (builtFor == (Graph, NodeId))
+        {
+            return;
+        }
+        builtFor = (Graph, NodeId);
+        result = FlowSummary.Build(Graph, Index, NodeId);
+        anyTags = Graph.Nodes.Values.Any(n => n.Tags.Count > 0 || n.TagLines.Count > 0);
+    }
+
+    private IEnumerable<FlowSummary.Item> Visible => result!.Items.Where(i => i.Tags.Any(t => !off.Contains(t)));
+
+    private void Toggle(string tag)
+    {
+        if (!off.Remove(tag))
+        {
+            off.Add(tag);
+        }
+    }
+}

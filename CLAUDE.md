@@ -19,7 +19,15 @@ C++(나중에 C#) 서버 코드의 호출 흐름을 보여 주는 개인 리뷰 
   셸(cmd)을 거치지 않는다(codex 는 node 로 스크립트 직접 실행). AI 는 읽기 전용(Claude: `--tools Read,Grep,Glob`, Codex: `--sandbox read-only`).
   AI 답은 `MiniMarkdown` 이 먼저 전부 이스케이프한 뒤 일부만 태그로 바꾼다. `MarkupString` 에 원문을 그대로 넣지 않는다.
 - MCP 서버(`review-tool mcp`)는 표준 출력에 프로토콜 메시지만 쓴다(안내·로그는 표준 오류). 저장된 결과를 읽기만 한다.
-- 화면·MCP·문맥 복사가 같은 말을 하도록 조회와 문구는 Core(`TraceQueries`, `FlowContext`)에 둔다.
+- 화면·MCP·문맥 복사가 같은 말을 하도록 조회와 문구는 Core(`TraceQueries`, `FlowContext`, `Journey`, `FlowSummary`, `SystemMap`)에 둔다.
+- 3단계(게임 서버 보기)는 **범용 규칙 + 대상 설정**이다. 특정 저장소의 이름(EZoneMsg 같은)을 코드에 넣지 않고 `channels`·`tags` 기본값이나
+  `targets/*.json` 으로 뺀다. 확인은 asio-server(실측)와 `Fixtures/multi`(여러 프로세스 예제) 둘 다.
+- 프로세스 = 진입점 파일에서 가장 가까운 빌드 프로젝트 폴더(`.vcxproj`·`CMakeLists.txt`). `ProcessMap` 은 진입점 묶음 이름으로 파일을 나눈다.
+- 다른 프로세스로 가는 패킷(`crossProcess: true`)은 호출 선으로 잇지 않는다(트리·영향 분석이 프로세스를 넘지 않게). 여정(`Journey`)만 잇는다.
+  같은 프로세스 안 메시지는 `Resolution = "Message"` 선으로 잇는다.
+- `Register(this, &C::H)` 처럼 함수 주소만 넘긴 줄을 clangd 는 호출로 준다. 여정·흐름 요약은 `TraceQueries.IsAddressOnly` 로 이런 선을 따라가지 않는다.
+- clangd 는 프로세스마다 있는 `main` 에 같은 심볼 ID 를 준다. 정의 파일이 다르면 다른 노드로 나누고(`CallTreeWalker`) 제 본문 안 호출만 남긴다.
+- 클래스 선언(`TypePass`)은 **모든 호출 조회가 끝난 뒤**에 파일을 연다(아래 "파일을 열수록 결과가 줄 수 있다").
 
 ## clangd 사용 요령 (실측, 바꾸기 전에 읽을 것)
 

@@ -1,0 +1,192 @@
+@using ReviewTool.Core
+
+@* 패킷 여정: 이 진입점에 오기까지(앞 단계들)와 여기서 보내는 패킷이 가는 곳. 함수를 누르면 그 프로세스 안 호출 경로가 코드 스택에 열린다. *@
+<div class="journey">
+    @if (result is null || journey is null)
+    {
+    }
+    else if (!result.HasMessageData)
+    {
+        <div class="note warn">이 분석 결과에는 메시지 정보가 없습니다(3단계 이전 결과). <b>재분석</b>하면 여정이 보입니다.</div>
+    }
+    else
+    {
+        <h3>여기까지 오는 길 <span class="count">@chains.Count</span></h3>
+        @if (chains.Count == 0)
+        {
+            <p class="hint-line">앞 단계를 찾지 못했습니다.</p>
+        }
+        @foreach (var chain in chains)
+        {
+            <div class="chain">
+                @for (var i = 0; i < chain.Count; i++)
+                {
+                    var step = chain[i];
+                    @if (step.Kind == JourneyKind.Origin)
+                    {
+                        <span class="j-origin" title="@Journey.OriginText(step)">● 시작</span>
+                        continue;
+                    }
+                    @if (step.Kind == JourneyKind.Cut)
+                    {
+                        <span class="j-origin">… 제한</span>
+                        continue;
+                    }
+                    @StationButton(step, step.Kind == JourneyKind.Repeat)
+                    @if (i + 1 < chain.Count)
+                    {
+                        @Arrow(step)
+                    }
+                }
+            </div>
+        }
+        @if (chainsCut)
+        {
+            <p class="hint-line">길이 많아 @MaxChains 개까지만 보입니다.</p>
+        }
+
+        <h3>여기서 나가는 길 <span class="count">@(result.Downstream.Children.Count)</span></h3>
+        @if (result.Downstream.Children.Count == 0)
+        {
+            <p class="hint-line">이 흐름(같은 프로세스 안에서 닿는 함수)에서 다른 곳으로 보내는 패킷을 찾지 못했습니다.</p>
+        }
+        <div class="j-tree">
+            @Down(result.Downstream)
+        </div>
+
+        <details class="limits">
+            <summary>이 결과가 증명하지 않는 것</summary>
+            <ul>
+                @foreach (var l in Journey.Limits)
+                {
+                    <li>@l</li>
+                }
+            </ul>
+        </details>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TraceGraph Graph { get; set; } = default!;
+    [Parameter, EditorRequired] public TraceIndex Index { get; set; } = default!;
+    [Parameter, EditorRequired] public string NodeId { get; set; } = "";
+    [Parameter] public EventCallback<IReadOnlyList<string>> OnOpen { get; set; }
+
+    private const int MaxChains = 15;
+    private Journey? journey;
+    private JourneyResult? result;
+    private List<List<JourneyNode>> chains = [];
+    private bool chainsCut;
+    private (TraceGraph, string)? builtFor;
+
+    protected override void OnParametersSet()
+    {
+        if (builtFor == (Graph, NodeId))
+        {
+            return;
+        }
+        builtFor = (Graph, NodeId);
+        journey = new Journey(Graph, Index);
+        result = journey.Build(NodeId);
+        // 거슬러 올라간 트리의 뿌리→잎 경로를 뒤집으면 시작 → … → 여기
+        chains = [];
+        chainsCut = false;
+        void Walk(JourneyNode n, List<JourneyNode> path)
+        {
+            path = [.. path, n];
+            if (n.Children.Count == 0)
+            {
+                if (chains.Count >= MaxChains)
+                {
+                    chainsCut = true;
+                    return;
+                }
+                chains.Add(Enumerable.Reverse(path).ToList());
+                return;
+            }
+            foreach (var c in n.Children)
+            {
+                Walk(c, path);
+            }
+        }
+        Walk(result.Upstream, []);
+    }
+
+    private string Name(string id) => Graph.Nodes.TryGetValue(id, out var n) ? TraceQueries.ShortName(n.Name) : "?";
+
+    private bool ShowProcess => journey?.Processes.Names.Count > 0;
+
+    private Task Open(IReadOnlyList<string> path) => path.Count > 0 && path.All(Graph.Nodes.ContainsKey) ? OnOpen.InvokeAsync(path) : Task.CompletedTask;
+
+    // 받는 곳 하나. 누르면: 앞 단계면 그 받는 곳 → 보낸 함수까지, 아니면 받는 함수만
+    private RenderFragment StationButton(JourneyNode n, bool repeat) => __builder =>
+    {
+        var path = n.Path.Count > 0 ? n.Path : (IReadOnlyList<string>)[n.NodeId];
+        <button class="j-station @(n.NodeId == NodeId ? "here" : "") @(repeat ? "repeat" : "")" title="@journey!.StationText(n)" @onclick="() => Open(path)">
+            @if (ShowProcess)
+            {
+                <span class="proc">@ProcessMap.Display(n.Process)</span>
+            }
+            <span class="fn">@Name(n.NodeId)</span>
+            @if (n.Key.Length > 0)
+            {
+                <span class="key">@n.Key</span>
+            }
+            @if (repeat)
+            {
+                <span class="sub">(위에서 펼침)</span>
+            }
+        </button>
+    };
+
+    // 앞 단계(n) → 다음 단계 사이 화살표
+    private RenderFragment Arrow(JourneyNode n) => __builder =>
+    {
+        @if (n.SenderId is not null)
+        {
+            <span class="j-arrow packet" title="@journey!.LinkText(n)">
+                ─ @n.LinkKey @(n.SentHow == "변수 타입" ? "(추정)" : "") →
+            </span>
+        }
+        else
+        {
+            <span class="j-arrow" title="@journey!.LinkText(n)">⇢ 안쪽 호출</span>
+        }
+    };
+
+    private RenderFragment Down(JourneyNode parent) => __builder =>
+    {
+        @if (parent.Children.Count > 0)
+        {
+            <ul>
+                @foreach (var c in parent.Children)
+                {
+                    var child = c;
+                    <li>
+                        @if (child.Kind == JourneyKind.Cut)
+                        {
+                            <span class="j-origin">… 깊이·개수 제한에서 자름</span>
+                        }
+                        else
+                        {
+                            <button class="link j-send" title="@journey!.LinkText(child)" @onclick="() => Open(child.Path)">
+                                @Name(child.SenderId ?? "") <span class="loc">@child.SentAt</span>
+                            </button>
+                            <span class="j-arrow packet">─ @child.LinkKey @(child.SentHow == "변수 타입" ? "(추정)" : "") →</span>
+                            @if (child.Kind == JourneyKind.Exit)
+                            {
+                                <span class="j-origin" title="@journey!.ExitText(child)">받는 곳 없음 (범위 밖)</span>
+                            }
+                            else
+                            {
+                                @StationButton(new JourneyNode { Kind = child.Kind, Key = child.Key, NodeId = child.NodeId, Process = child.Process,
+                                                                 ReceivedAt = child.ReceivedAt, ReceivedHow = child.ReceivedHow }, child.Kind == JourneyKind.Repeat)
+                            }
+                            @Down(child)
+                        }
+                    </li>
+                }
+            </ul>
+        }
+    };
+}

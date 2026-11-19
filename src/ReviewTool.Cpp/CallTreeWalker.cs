@@ -14,6 +14,8 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
 {
     private readonly Dictionary<string, JsonObject> items_ = [];
     private readonly Dictionary<string, string> idBySymbol_ = [];
+    // 심볼 ID 를 다른 정의와 나눠 가진 노드(여러 실행 파일의 main 등). 색인이 호출을 합쳐 주므로 제 본문 안 호출만 쓴다.
+    private readonly HashSet<string> sharedSymbol_ = [];
     // 펼친 노드와 그때의 깊이. 다른 진입점에서 더 얕게 닿으면 남은 깊이만큼 아래를 다시 따라간다
     // (진입점 처리 순서에 따라 결과가 달라지지 않게).
     private readonly Dictionary<string, int> expandedDepth_ = [];
@@ -131,6 +133,10 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
                 {
                     continue;
                 }
+                if (sharedSymbol_.Contains(id) && !InBody(call, node))
+                {
+                    continue;
+                }
                 // 노드 상한은 새 노드를 실제로 만들 때 검사한다(이미 있는 함수로 가는 선은 그대로 잇는다)
                 if (!IsKnown(to) && graph.Nodes.Count >= config.MaxNodes)
                 {
@@ -213,6 +219,31 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
         }
     }
 
+    // 심볼을 나눠 가진 노드 중 먼저 펼친 쪽은 그때 아직 몰랐으므로, 다 끝난 뒤 제 본문 밖 호출을 걷어 낸다.
+    public int PruneSharedSymbols()
+    {
+        var removed = 0;
+        foreach (var id in sharedSymbol_)
+        {
+            var node = graph.Nodes[id];
+            foreach (var edge in graph.Edges.Where(e => e.From == id).ToList())
+            {
+                edge.CallSites.RemoveAll(s => s.Line < node.StartLine || s.Line > node.EndLine);
+                if (edge.CallSites.Count == 0)
+                {
+                    graph.Edges.Remove(edge);
+                    edges_.Remove((edge.From, edge.To));
+                    removed++;
+                }
+            }
+        }
+        return removed;
+    }
+
+    private static bool InBody(JsonObject call, TraceNode node) =>
+        call["fromRanges"]?.AsArray().OfType<JsonObject>().Any(r =>
+            r["start"]?["line"]?.GetValue<int>() + 1 is { } l && l >= node.StartLine && l <= node.EndLine) == true;
+
     private static (int Line, int Character) FirstRange(JsonObject call)
     {
         var start = call["fromRanges"]?.AsArray().FirstOrDefault()?["start"];
@@ -235,21 +266,35 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
         var name = item["name"]!.GetValue<string>();
         var qualified = item["detail"]?.GetValue<string>() is { Length: > 0 } d ? d : name;
         var symbol = item["data"]?.GetValue<string>();
-        if (symbol is not null && idBySymbol_.TryGetValue(symbol, out var known))
-        {
-            return known;
-        }
-
         var path = PathUri.ToPath(item["uri"]!.GetValue<string>());
         var sel = (item["selectionRange"] ?? item["range"])!["start"]!;
         var line0 = sel["line"]!.GetValue<int>();
         var col = sel["character"]!.GetValue<int>();
-
         var inside = IsInside(path, out var rel);
+
+        var split = false;
+        if (symbol is not null && idBySymbol_.TryGetValue(symbol, out var known))
+        {
+            // 프로세스마다 있는 main 처럼 다른 파일에 정의가 또 있으면 심볼 ID 가 같아도 다른 함수다.
+            var first = graph.Nodes[known];
+            if (!inside || first.Kind == NodeKind.External || string.Equals(first.File, rel, StringComparison.OrdinalIgnoreCase) ||
+                !FunctionBody.Find(ReadLines(path), line0, col).HasBody)
+            {
+                return known;
+            }
+            split = true;
+            sharedSymbol_.Add(known);
+        }
+
         // 범위 밖 함수는 템플릿 인스턴스마다 심볼이 달라 같은 이름이 줄줄이 생긴다. 이름 하나로 합친다.
         var id = !inside ? $"ext:{qualified}"
+               : split ? $"{qualified}@{symbol}@{rel}"
                : symbol is not null ? $"{qualified}@{symbol}"
                : $"{qualified}@{rel}:{line0 + 1}";
+        if (split)
+        {
+            sharedSymbol_.Add(id);
+        }
         if (graph.Nodes.ContainsKey(id))
         {
             return id;
@@ -311,7 +356,7 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
 
         graph.Nodes[id] = node;
         items_[id] = item;
-        if (symbol is not null)
+        if (symbol is not null && !split)
         {
             idBySymbol_[symbol] = id;
         }

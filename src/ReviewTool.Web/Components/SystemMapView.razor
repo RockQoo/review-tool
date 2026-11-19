@@ -1,0 +1,396 @@
+@using ReviewTool.Core
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+@* 전체 흐름도(프로세스 × 클래스)와 클래스 다이어그램. 위치는 여기서 계산하고 그리기만 graph.js 가 한다. *@
+<div class="tree-tools">
+    @if (Mode == "map")
+    {
+        <label title="선택한 진입점이 같은 프로세스 안에서 부르는 클래스와, 보낸 패킷을 받는 다른 프로세스의 클래스만 밝게">
+            <input type="checkbox" checked="@focusFlow" disabled="@(EntryNodeId is null)" @onchange="e => SetFocus((bool)e.Value!)" /> 선택한 흐름만 밝게
+        </label>
+        <label><input type="checkbox" checked="@showShared" @onchange="e => SetShared((bool)e.Value!)" /> 공용 코드 보기</label>
+    }
+    else
+    {
+        <label>범위
+            <select value="@scope" @onchange="OnScope">
+                <option value="flow" disabled="@(EntryNodeId is null)">선택한 흐름의 클래스</option>
+                <option value="all">전체</option>
+            </select>
+        </label>
+        <label><input type="checkbox" checked="@showCalls" @onchange="e => SetCalls((bool)e.Value!)" /> 호출 선</label>
+    }
+    <button class="link" @onclick="Fit">화면 맞춤</button>
+    <span class="graph-info">@info</span>
+</div>
+@if (note is not null)
+{
+    <div class="note">@note</div>
+}
+<div class="map-wrap">
+    <div id="@CanvasId" class="graph-canvas map-canvas"></div>
+    @if (picked is not null)
+    {
+        <aside class="map-info">
+            <div class="frame-head">
+                <span class="fname">@picked</span>
+                @if (pickedProcess is not null && processes!.Names.Count > 0)
+                {
+                    <span class="proc">@ProcessMap.Display(pickedProcess)</span>
+                }
+                <button class="link close" @onclick="() => picked = null">✕</button>
+            </div>
+            @if (pickedType is not null)
+            {
+                <div class="loc">@pickedType.Kind · @pickedType.File:@pickedType.Line</div>
+                @if (pickedType.Bases.Count > 0)
+                {
+                    <div>부모: @string.Join(", ", pickedType.Bases)</div>
+                }
+                @if (pickedType.Members.Count > 0)
+                {
+                    <ul class="members">
+                        @foreach (var m in pickedType.Members)
+                        {
+                            <li class="mono"><span class="mk">@(m.Kind == "field" ? "필드" : m.Kind == "ctor" ? "생성자" : "메서드")</span> @m.Name <span class="loc">@m.Detail</span></li>
+                        }
+                    </ul>
+                }
+            }
+            <div class="compare-title">분석된 함수 <span class="count">@pickedFunctions.Count</span></div>
+            <ul class="members">
+                @foreach (var f in pickedFunctions)
+                {
+                    var fn = f;
+                    var entry = Graph.EntryPoints.FirstOrDefault(e => e.NodeId == fn.Id);
+                    <li>
+                        <button class="link mono" title="진입점에서 이 함수까지 코드 스택으로 열기" @onclick="() => OpenFunction(fn.Id)">@fn.Name.Split("::")[^1]</button>
+                        @if (entry is not null)
+                        {
+                            var en = entry;
+                            <button class="link badge" title="이 진입점 고르기" @onclick="() => OnSelectEntry.InvokeAsync(en)">진입점 @en.Label</button>
+                        }
+                    </li>
+                }
+            </ul>
+        </aside>
+    }
+</div>
+<div class="graph-legend">
+    @if (Mode == "map")
+    {
+        <span>점선 상자 = 프로세스(빌드 프로젝트) · 파란 점선 = 프로세스를 넘는 패킷(추정) · 주황 점선 = 등록·메시지 연결(추정) · 굵기 = 호출 수 · 상자를 누르면 함수 목록</span>
+    }
+    else
+    {
+        <span>속 빈 화살표 = 상속(소스 텍스트 기준) · 회색 선 = 클래스 사이 호출 · 멤버는 clangd 가 준 선언 · 상자를 누르면 함수 목록</span>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TraceGraph Graph { get; set; } = default!;
+    [Parameter, EditorRequired] public TraceIndex Index { get; set; } = default!;
+    [Parameter, EditorRequired] public string Mode { get; set; } = "map";   // map | classes
+    [Parameter] public string? EntryNodeId { get; set; }
+    [Parameter] public EventCallback<IReadOnlyList<string>> OnOpen { get; set; }
+    [Parameter] public EventCallback<EntryPoint> OnSelectEntry { get; set; }
+
+    private const string CanvasId = "map-canvas";
+    private const int MaxClasses = 160;
+    private IJSObjectReference? module;
+    private DotNetObjectReference<SystemMapView>? selfRef;
+    private string? renderedKey;
+    private bool focusFlow = true;
+    private bool showShared = true;
+    private bool showCalls = true;
+    private string scope = "flow";
+    private string info = "";
+    private string? note;
+    private ProcessMap? processes;
+    private readonly Dictionary<string, string> classOfId = [];
+    private string? picked;
+    private string? pickedProcess;
+    private TypeInfo? pickedType;
+    private List<TraceNode> pickedFunctions = [];
+
+    private string Key => $"{Graph.AnalyzedAt:O}|{Mode}|{EntryNodeId}|{focusFlow}|{showShared}|{showCalls}|{scope}";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/graph.js");
+            selfRef = DotNetObjectReference.Create(this);
+        }
+        if (module is null || Key == renderedKey)
+        {
+            return;
+        }
+        renderedKey = Key;
+        var elements = Mode == "map" ? BuildMap() : BuildClasses();
+        await module.InvokeVoidAsync("renderMap", CanvasId, elements, selfRef);
+        StateHasChanged();
+    }
+
+    private void SetFocus(bool v) => focusFlow = v;
+    private void SetShared(bool v) => showShared = v;
+    private void SetCalls(bool v) => showCalls = v;
+    private void OnScope(ChangeEventArgs e) => scope = e.Value?.ToString() ?? "flow";
+
+    private async Task Fit()
+    {
+        if (module is not null)
+        {
+            await module.InvokeVoidAsync("fit", CanvasId);
+        }
+    }
+
+    private static double TextWidth(string s) => s.Length * 6.8 + 22;
+
+    private string AddClassId(string cls)
+    {
+        var id = "c" + classOfId.Count;
+        classOfId[id] = cls;
+        return id;
+    }
+
+    // 프로세스마다 한 열. 열 안에서는 클래스를 격자로 쌓는다.
+    private List<object> BuildMap()
+    {
+        classOfId.Clear();
+        processes = new ProcessMap(Graph);
+        var map = SystemMap.Build(Graph, Index);
+        var flow = focusFlow && EntryNodeId is not null ? SystemMap.ClassesOnFlow(Graph, Index, EntryNodeId) : null;
+        var classes = map.Classes.Where(c => showShared || c.Process.Length > 0 || processes.Names.Count == 0).ToList();
+        var idOf = new Dictionary<string, string>();
+        var elements = new List<object>();
+        var x = 0.0;
+        foreach (var p in map.Processes)
+        {
+            var inProcess = classes.Where(c => c.Process == p).ToList();
+            if (inProcess.Count == 0)
+            {
+                continue;
+            }
+            var pid = "p" + elements.Count;
+            elements.Add(new { data = new { id = pid, label = ProcessMap.Display(p), w = 10, h = 10 }, classes = "process" });
+            var cols = Math.Clamp((int)Math.Ceiling(Math.Sqrt(inProcess.Count / 2.0)), 1, 4);
+            var cellW = inProcess.Max(c => TextWidth(Short(c.Id))) + 24;
+            for (var i = 0; i < inProcess.Count; i++)
+            {
+                var c = inProcess[i];
+                var id = AddClassId(c.Id);
+                idOf[c.Id] = id;
+                var cls = new List<string>();
+                if (c.Entries > 0) cls.Add("entry");
+                if (flow is not null) cls.Add(flow.Contains(c.Id) ? "on" : "dim");
+                elements.Add(new
+                {
+                    data = new { id, parent = pid, label = Short(c.Id), w = TextWidth(Short(c.Id)), h = 26 },
+                    position = new { x = x + (i % cols) * cellW, y = (i / cols) * 46.0 },
+                    classes = string.Join(' ', cls),
+                });
+            }
+            x += cols * cellW + 120;
+        }
+        var shown = 0;
+        foreach (var l in map.Links)
+        {
+            if (!idOf.TryGetValue(l.From, out var a) || !idOf.TryGetValue(l.To, out var b))
+            {
+                continue;
+            }
+            var cls = new List<string> { l.Kind == "packet" ? "packet" : l.Kind == "guess" ? "guess" : "call" };
+            if (flow is not null && !(flow.Contains(l.From) && flow.Contains(l.To)))
+            {
+                cls.Add("dim");
+            }
+            var label = l.Kind == "packet" ? string.Join(", ", l.Keys.Take(3)) + (l.Keys.Count > 3 ? $" 외 {l.Keys.Count - 3}" : "") : "";
+            elements.Add(new
+            {
+                data = new { id = $"{a}-{b}-{l.Kind}", source = a, target = b, label, width = 1 + Math.Log2(l.Count) },
+                classes = string.Join(' ', cls),
+            });
+            shown++;
+        }
+        info = $"프로세스 {map.Processes.Count(p => classes.Any(c => c.Process == p))}개 · 클래스 {classes.Count}개 · 선 {shown}개";
+        note = Graph.Channels.Count == 0 ? "이 분석 결과에는 메시지 정보가 없어 프로세스를 넘는 패킷 선이 없습니다. 재분석하세요." : null;
+        return elements;
+    }
+
+    // 상속 층으로 줄을 나눈다: 부모가 위, 자식이 아래
+    private List<object> BuildClasses()
+    {
+        classOfId.Clear();
+        processes = new ProcessMap(Graph);
+        if (Graph.Types.Count == 0)
+        {
+            info = "";
+            note = "이 분석 결과에는 클래스 정보가 없습니다(3단계 이전 결과). 재분석하세요.";
+            return [];
+        }
+        note = null;
+        var byName = Graph.Types.ToDictionary(t => t.Name);
+        var byShort = Graph.Types.GroupBy(t => t.Name.Split("::")[^1]).ToDictionary(g => g.Key, g => g.First());
+        IEnumerable<TypeInfo> chosen = Graph.Types;
+        if (scope == "flow" && EntryNodeId is not null)
+        {
+            var flow = SystemMap.ClassesOnFlow(Graph, Index, EntryNodeId);
+            var set = Graph.Types.Where(t => flow.Contains(t.Name)).ToList();
+            // 부모까지
+            for (var i = 0; i < set.Count; i++)
+            {
+                foreach (var b in set[i].Bases)
+                {
+                    if (byShort.TryGetValue(b, out var bt) && !set.Contains(bt))
+                    {
+                        set.Add(bt);
+                    }
+                }
+            }
+            chosen = set;
+        }
+        var list = chosen.Take(MaxClasses).ToList();
+        if (chosen.Count() > MaxClasses)
+        {
+            note = $"클래스가 많아 {MaxClasses}개만 그렸습니다. 범위를 \"선택한 흐름\"으로 좁히세요.";
+        }
+        var inSet = list.ToHashSet();
+        TypeInfo? Base(string b) => byShort.TryGetValue(b, out var t) && inSet.Contains(t) ? t : null;
+        var level = new Dictionary<TypeInfo, int>();
+        int Level(TypeInfo t, int guard = 0)
+        {
+            if (level.TryGetValue(t, out var l)) return l;
+            if (guard > 20) return 0;
+            var parents = t.Bases.Select(Base).OfType<TypeInfo>().Where(p => p != t).ToList();
+            return level[t] = parents.Count == 0 ? 0 : parents.Max(p => Level(p, guard + 1)) + 1;
+        }
+        var elements = new List<object>();
+        var idOf = new Dictionary<TypeInfo, string>();
+        var y = 0.0;
+        foreach (var row in list.GroupBy(t => Level(t)).OrderBy(g => g.Key))
+        {
+            var x = 0.0;
+            var rowH = 0.0;
+            foreach (var t in row.OrderBy(t => t.Bases.FirstOrDefault() ?? "", StringComparer.Ordinal).ThenBy(t => t.Name, StringComparer.Ordinal))
+            {
+                var (label, w, h) = Uml(t);
+                if (x > 2600)
+                {
+                    x = 0;
+                    y += rowH + 50;
+                    rowH = 0;
+                }
+                var id = AddClassId(t.Name);
+                idOf[t] = id;
+                var entry = Graph.EntryPoints.Any(e => Graph.Nodes.TryGetValue(e.NodeId, out var n) && SystemMap.ClassOf(n) == t.Name);
+                elements.Add(new
+                {
+                    data = new { id, label, w, h },
+                    position = new { x = x + w / 2, y = y + h / 2 },
+                    classes = "uml" + (entry ? " entry" : ""),
+                });
+                x += w + 40;
+                rowH = Math.Max(rowH, h);
+            }
+            y += rowH + 90;
+        }
+        var edges = 0;
+        foreach (var t in list)
+        {
+            foreach (var b in t.Bases.Select(Base).OfType<TypeInfo>().Distinct())
+            {
+                elements.Add(new { data = new { id = $"{idOf[t]}-{idOf[b]}-i", source = idOf[t], target = idOf[b], label = "", width = 1.4 }, classes = "inherit" });
+                edges++;
+            }
+        }
+        if (showCalls)
+        {
+            var nameToId = idOf.ToDictionary(kv => kv.Key.Name, kv => kv.Value);
+            foreach (var l in SystemMap.Build(Graph, Index).Links.Where(l => l.Kind != "packet"))
+            {
+                if (nameToId.TryGetValue(l.From, out var a) && nameToId.TryGetValue(l.To, out var b))
+                {
+                    elements.Add(new { data = new { id = $"{a}-{b}-c", source = a, target = b, label = "", width = 0.8 }, classes = l.Kind == "guess" ? "guess" : "call" });
+                    edges++;
+                }
+            }
+        }
+        info = $"클래스 {list.Count}개 · 선 {edges}개";
+        return elements;
+    }
+
+    private static (string Label, double W, double H) Uml(TypeInfo t)
+    {
+        const int MaxMembers = 14;
+        var lines = new List<string> { (t.Kind == "struct" ? "«struct» " : "") + Short(t.Name), "" };
+        var fields = t.Members.Where(m => m.Kind == "field").ToList();
+        var methods = t.Members.Where(m => m.Kind != "field").ToList();
+        foreach (var f in fields.Take(MaxMembers / 2))
+        {
+            lines.Add(Clip($"{f.Name} : {f.Detail}"));
+        }
+        if (fields.Count > MaxMembers / 2) lines.Add($"… 필드 {fields.Count - MaxMembers / 2}개 더");
+        lines.Add("");
+        foreach (var m in methods.Take(MaxMembers / 2))
+        {
+            lines.Add(Clip($"{m.Name}{(m.Detail.StartsWith('(') || m.Detail.Contains('(') ? Sig(m.Detail) : "()")}"));
+        }
+        if (methods.Count > MaxMembers / 2) lines.Add($"… 메서드 {methods.Count - MaxMembers / 2}개 더");
+        var width = lines.Max(l => l.Length) * 6.3 + 24;
+        var w = Math.Max(110, width);
+        // 빈 줄은 구분선 대신(Cytoscape 라벨은 글자만 된다)
+        var label = string.Join('\n', lines.Select(l => l.Length == 0 ? new string('─', Math.Max(6, (int)((w - 24) / 6.3))) : l));
+        return (label, w, lines.Count * 13.5 + 16);
+    }
+
+    private static string Sig(string detail)
+    {
+        // clangd detail: "void (int, const Foo &)" → "(int, const Foo &)"
+        var i = detail.IndexOf('(');
+        return i >= 0 ? detail[i..] : "()";
+    }
+
+    private static string Clip(string s) => s.Length > 56 ? s[..55] + "…" : s;
+
+    private static string Short(string name) => name.Contains("::") && !name.StartsWith('[') ? name.Split("::")[^1] : name;
+
+    [JSInvokable]
+    public Task OnMapNodeClick(string id) => InvokeAsync(() =>
+    {
+        if (!classOfId.TryGetValue(id, out var cls))
+        {
+            return;
+        }
+        picked = cls;
+        pickedType = Graph.Types.FirstOrDefault(t => t.Name == cls);
+        pickedFunctions = Graph.Nodes.Values.Where(n => SystemMap.ClassOf(n) == cls)
+            .OrderBy(n => n.File, StringComparer.Ordinal).ThenBy(n => n.StartLine).ToList();
+        pickedProcess = pickedFunctions.Count > 0 ? processes?.OfFile(pickedFunctions[0].File) : null;
+        StateHasChanged();
+    });
+
+    // 진입점에서 이 함수까지(가장 짧은 경로). 진입점에서 닿지 않으면 함수만.
+    private Task OpenFunction(string nodeId)
+    {
+        var hit = ImpactAnalyzer.Analyze(Graph, nodeId).Entries.OrderBy(e => e.Path.Count).FirstOrDefault();
+        return OnOpen.InvokeAsync(hit is not null ? hit.Path : [nodeId]);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (module is not null)
+        {
+            try
+            {
+                await module.InvokeVoidAsync("destroy", CanvasId);
+                await module.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+        selfRef?.Dispose();
+    }
+}

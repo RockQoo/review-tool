@@ -19,6 +19,9 @@ public static partial class CppTargetDetector
         // 들여쓰기 없는 줄(= 함수 정의)만. 본문 안의 Foo::HandleX( 호출은 들여쓰기가 있어 걸리지 않는다.
         new("Handle 로 시작하는 함수", @"^(?:[\w:<>,\*&]+[ \t]+)*(?<class>\w+)::(?<method>Handle\w+)[ \t]*\(", ["**/*.cpp"],
             "등록 코드를 못 찾을 때 쓰는 넓은 규칙: .cpp 의 Class::HandleXxx 정의 전부"),
+        // 시작 흐름(main → Init) 용. 다른 규칙과 상관없이 찾으면 켠다.
+        new("시작 함수", @"^(?:int|auto)[ \t]+(?<method>w?main)[ \t]*\(", ["**/*.cpp"],
+            "int main(...) — 설정 로딩·스레드·핸들러 등록·리스너 순서를 흐름 요약으로 본다"),
     ];
 
     private static readonly string[] ThirdPartyNames =
@@ -104,7 +107,8 @@ public static partial class CppTargetDetector
             detected.Add(new DetectedPreset(Presets[i], found.Select(f => (f.ClassName, f.Method)).Distinct().Count(), samples));
         }
         var specific = detected.Take(3).Where(d => d.Matches > 0).ToList();
-        var chosen = specific.Count > 0 ? specific : detected.Skip(3).Where(d => d.Matches > 0).ToList();
+        var chosen = specific.Count > 0 ? specific : detected.Skip(3).Take(1).Where(d => d.Matches > 0).ToList();
+        chosen.AddRange(detected.Skip(4).Where(d => d.Matches > 0));
         foreach (var d in detected)
         {
             d.Enabled = chosen.Contains(d);

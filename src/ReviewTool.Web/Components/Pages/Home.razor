@@ -217,7 +217,7 @@
     }
     else
     {
-        <main class="panes mode-@viewMode">
+        <main class="panes mode-@LayoutMode">
             <nav class="pane entries">
                 <input class="search" placeholder="진입점 찾기 (패킷, 함수)" @bind="entryFilter" @bind:event="oninput" />
                 @foreach (var group in FilteredEntries().GroupBy(e => e.Group))
@@ -234,10 +234,25 @@
                 }
             </nav>
 
-            <section class="pane tree @(viewMode == "tree" ? "" : "graph-mode")">
-                @if (selectedEntry is null)
+            <section class="pane tree @(viewMode is "graph" or "wide" or "map" or "classes" ? "graph-mode" : "")">
+                @if (selectedEntry is null && NeedsEntry)
                 {
                     <p class="hint">왼쪽에서 진입점을 고르세요.</p>
+                }
+                else if (viewMode is "map" or "classes")
+                {
+                    <SystemMapView Graph="graph" Index="index" Mode="@viewMode" EntryNodeId="@selectedEntry?.NodeId"
+                                   OnOpen="OpenFlowPath" OnSelectEntry="SelectEntryFromMap" />
+                }
+                else if (viewMode == "journey")
+                {
+                    <div class="view-title">패킷 여정 · <b>@selectedEntry!.Label</b> <span class="sub">@selectedEntry.Group</span></div>
+                    <JourneyView Graph="graph" Index="index" NodeId="@selectedEntry.NodeId" OnOpen="OpenFlowPath" />
+                }
+                else if (viewMode == "summary")
+                {
+                    <div class="view-title">흐름 요약 · <b>@selectedEntry!.Label</b> <span class="sub">@selectedEntry.Group</span></div>
+                    <FlowSummaryView Graph="graph" Index="index" NodeId="@selectedEntry.NodeId" OnOpen="OpenFlowPath" />
                 }
                 else if (viewMode != "tree")
                 {
@@ -256,7 +271,7 @@
                         <span class="graph-info">함수 @(graphCount)개@(graphTruncated ? $" (상한 {MaxGraphNodes}개에서 자름)" : "")</span>
                     </div>
                     <div id="graph-canvas" class="graph-canvas"></div>
-                    <div class="graph-legend">노드를 누르면 진입점부터 그 함수까지의 코드가 이어 붙습니다 · 점선 테두리 = 깊이 제한으로 더 있음 · 점선 화살표 = 위로 되돌아가는 호출 · 주황 점선 = 등록 연결(추정)</div>
+                    <div class="graph-legend">노드를 누르면 진입점부터 그 함수까지의 코드가 이어 붙습니다 · 점선 테두리 = 깊이 제한으로 더 있음 · 점선 화살표 = 위로 되돌아가는 호출 · 주황 점선 = 등록·메시지 연결(추정)</div>
                 }
                 else
                 {
@@ -270,7 +285,7 @@
                         <div class="note">@expandNote</div>
                     }
                     <div class="tree-body" role="tree" aria-label="호출 트리">
-                        @RenderNode([selectedEntry.NodeId], null)
+                        @RenderNode([selectedEntry!.NodeId], null)
                     </div>
                 }
             </section>
@@ -513,7 +528,37 @@
         ("tree", "list-tree", "트리 보기"),
         ("graph", "network", "노드 보기"),
         ("wide", "layout-panel-top", "노드 크게 (코드는 아래)"),
+        ("journey", "route", "패킷 여정 (프로세스를 넘는 흐름)"),
+        ("summary", "list-checks", "흐름 요약 (시작 순서, DB·캐시 접근 순서)"),
+        ("map", "map", "전체 흐름도 (프로세스 × 클래스)"),
+        ("classes", "boxes", "클래스 다이어그램"),
     ];
+
+    // 칸 배치: 그림이 큰 보기는 위아래(wide), 나머지는 세 칸
+    private string LayoutMode => viewMode switch
+    {
+        "graph" => "graph",
+        "wide" or "map" or "classes" => "wide",
+        _ => "tree",
+    };
+
+    private bool NeedsEntry => viewMode is not ("map" or "classes");
+
+    // 여정·요약·지도에서 고른 경로를 코드 스택으로(고른 진입점은 그대로 둔다)
+    private void OpenFlowPath(IReadOnlyList<string> path)
+    {
+        if (graph is null || path.Count == 0 || path.Any(p => !graph.Nodes.ContainsKey(p)))
+        {
+            return;
+        }
+        stack = [.. path];
+        openLine = null;
+    }
+
+    private void SelectEntryFromMap(EntryPoint e)
+    {
+        SelectEntry(e);
+    }
 
     private const string GraphElementId = "graph-canvas";
     private const int MaxGraphNodes = 250;
@@ -555,7 +600,7 @@
 
         // 그래프 칸(graph-canvas)이 지금 화면에 있는지. 없으면 JS 쪽 인스턴스를 반드시 정리한다
         // (대상 추가 화면으로 갔다 오면 칸이 새로 만들어지므로 다시 그려야 한다).
-        var canvasVisible = !adding && target is not null && viewMode != "tree" && selectedEntry is not null &&
+        var canvasVisible = !adding && target is not null && viewMode is "graph" or "wide" && selectedEntry is not null &&
                             graph is not null && index is not null;
         if (!canvasVisible)
         {
@@ -724,7 +769,7 @@
             {
                 classes.Add("back");
             }
-            if (index!.ChildrenOf(from).Any(e => e.To == to && e.Resolution == "Registration"))
+            if (index!.ChildrenOf(from).Any(e => e.To == to && TraceQueries.IsGuess(e)))
             {
                 classes.Add("guess");
             }
@@ -1017,9 +1062,13 @@
                 {
                     <span class="badge warn">제한</span>
                 }
-                @if (via?.Resolution == "Registration")
+                @if (via is not null && TraceQueries.IsGuess(via))
                 {
-                    <span class="badge guess" title="X.Dispatch(...) 를 같은 파일에서 X.Register(...) 한 핸들러로 이은 것. 소스 텍스트로 추정">등록 연결(추정)</span>
+                    <span class="badge guess" title="@TraceQueries.ResolutionHint(via.Resolution). 소스 텍스트로 추정">@TraceQueries.ResolutionText(via.Resolution)</span>
+                }
+                @foreach (var tag in node.Tags)
+                {
+                    <span class="badge tag">@tag</span>
                 }
                 @if (via is not null)
                 {

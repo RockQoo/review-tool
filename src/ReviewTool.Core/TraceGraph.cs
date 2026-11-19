@@ -27,6 +27,55 @@ public sealed class TraceGraph
 
     // 노드의 Signature/BodyHash 를 만든 방식(CodeFingerprint.Version). 0 = 지문 없음(옛 결과).
     public int FingerprintVersion { get; set; }
+
+    // 메시지(패킷·레인 메시지)를 보내고 받는 곳. 소스 텍스트로 찾은 것이라 추정이다(MessagePass).
+    // 비어 있으면 3단계 이전 결과라 재분석해야 여정이 보인다.
+    public List<ChannelInfo> Channels { get; set; } = [];
+    public List<MessageSite> Messages { get; set; } = [];
+
+    // 흐름에 나온 클래스의 선언(멤버·부모). 클래스 다이어그램용.
+    public List<TypeInfo> Types { get; set; } = [];
+}
+
+public sealed class ChannelInfo
+{
+    public string Name { get; set; } = "";
+    // true: 다른 프로세스로 가는 패킷(여정으로만 잇는다). false: 같은 프로세스 안의 메시지(호출 선으로 잇는다).
+    public bool CrossProcess { get; set; }
+}
+
+public enum MessageRole
+{
+    Send,
+    Receive,
+}
+
+public sealed class MessageSite
+{
+    public string Channel { get; set; } = "";
+    public string Key { get; set; } = "";            // 패킷·메시지 이름 (C2ZMove, EZoneMsg::Tick)
+    public MessageRole Role { get; set; }
+    public string NodeId { get; set; } = "";         // 보내거나 받는 함수
+    public SourceRef Site { get; set; } = new();     // 보낸 줄, case 줄, 또는 핸들러를 등록한 줄
+    // 어떻게 찾았나: "직접"(이름이 그 줄에 있음), "변수 타입"(보낸 변수의 선언에서), "case", "등록"
+    public string How { get; set; } = "";
+}
+
+public sealed class TypeInfo
+{
+    public string Name { get; set; } = "";           // 한정 이름 (Network::Session)
+    public string Kind { get; set; } = "class";      // class / struct
+    public string File { get; set; } = "";
+    public int Line { get; set; }
+    public List<string> Bases { get; set; } = [];    // 부모 이름(짧은 이름, 소스 텍스트 기준)
+    public List<TypeMember> Members { get; set; } = [];
+}
+
+public sealed class TypeMember
+{
+    public string Name { get; set; } = "";
+    public string Kind { get; set; } = "";           // field / method / ctor
+    public string Detail { get; set; } = "";         // 타입 또는 시그니처 (clangd detail)
 }
 
 public sealed class EntryPoint
@@ -62,6 +111,17 @@ public sealed class TraceNode
 
     // 선언만 있는 가상 함수의 구현 후보(파생 클래스에서 같은 이름). 소스 텍스트로 찾은 "추정"이다.
     public List<ImplementationRef> Implementations { get; set; } = [];
+
+    // 설정(tags)의 이름 규칙에 걸린 표시: "DB", "스레드" 등. 흐름 요약에 쓴다.
+    public List<string> Tags { get; set; } = [];
+    // 설정(tags)의 본문 규칙(code)에 걸린 줄: 호출로 잡히지 않는 SP 이름 등.
+    public List<TaggedLine> TagLines { get; set; } = [];
+}
+
+public sealed class TaggedLine
+{
+    public int Line { get; set; }
+    public List<string> Tags { get; set; } = [];
 }
 
 public sealed class ImplementationRef
@@ -98,6 +158,7 @@ public sealed class TraceEdge
     // 어떻게 연결했는지.
     //  Static       : clangd 가 정적으로 해석한 호출(가상 함수는 선언된 쪽으로 연결된다)
     //  Registration : X.Dispatch(...) 를 같은 파일에서 X.Register(...) 한 핸들러로 이은 것(추정)
+    //  Message      : 같은 프로세스 안 메시지(레인 등)를 보낸 곳 → 그 메시지를 등록한 핸들러(추정)
     public string Resolution { get; set; } = "Static";
 }
 

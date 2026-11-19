@@ -123,4 +123,97 @@ public class ClangdEndToEndTests
             Directory.Delete(data, recursive: true);
         }
     }
+
+    // 3단계: 두 프로세스(LoginServer, GameServer) 예제. 패킷 여정·레인 메시지 연결·이름 표시·클래스·main 둘.
+    [Fact]
+    public async Task 두_프로세스_예제에서_여정_메시지_표시_클래스를_만든다()
+    {
+        string clangd;
+        try
+        {
+            clangd = ClangdSession.FindClangd("");
+        }
+        catch (FileNotFoundException)
+        {
+            return;
+        }
+
+        var fixture = Path.Combine(AppContext.BaseDirectory, "Fixtures", "multi");
+        var data = Directory.CreateTempSubdirectory("rt-e2e-multi").FullName;
+        try
+        {
+            var lane = new MessageChannel
+            {
+                Name = "레인 메시지", CrossProcess = false, Send = @"\bPushMsg\b", Key = @"\b(?<key>E\w+::\w+)",
+                Register = @"\bRegist\(\s*(?<key>E\w+::\w+)\s*,\s*&(?<class>\w+)::(?<method>\w+)",
+            };
+            var config = new TargetConfig
+            {
+                Name = "multi",
+                Root = fixture,
+                EntryPoints =
+                [
+                    new EntryPointRule { Name = "등록", Pattern = @"Register\(\s*&(?<class>\w+)::(?<method>\w+)\s*\)" },
+                    new EntryPointRule { Name = "시작 함수", Pattern = @"^int[ \t]+(?<method>main)[ \t]*\(", Files = ["**/*.cpp"] },
+                ],
+                Channels = [MessageChannel.DefaultPacket(), lane],
+                Cpp = new CppOptions
+                {
+                    Clangd = clangd, CompileFrom = "flags", Standard = "c++20",
+                    ExtraIncludeDirs = ["Common", "LoginServer/Src", "GameServer/Src"],
+                    DetectMsvc = false, IndexTimeoutSeconds = 120,
+                },
+            };
+
+            var graph = await new CppTraceAnalyzer().AnalyzeAsync(config, new WorkPaths(data, "multi"), null, CancellationToken.None);
+
+            // 묶음 = 빌드 프로젝트 폴더(CMakeLists.txt), main 은 프로세스마다 따로
+            var groups = graph.EntryPoints.Select(e => $"{e.Group}: {e.Label}").Order(StringComparer.Ordinal).ToList();
+            Assert.Equal(["GameServer / GameHandler: EGameMsg::Tick", "GameServer / GameHandler: L2GEnter", "GameServer / main: main",
+                          "LoginServer / LoginHandler: C2LLogin", "LoginServer / main: main"], groups);
+            var mains = graph.EntryPoints.Where(e => e.Label == "main").Select(e => graph.Nodes[e.NodeId]).ToList();
+            Assert.Equal(2, mains.Select(m => m.Id).Distinct().Count());
+            var gameMain = mains.Single(m => m.File.StartsWith("GameServer/", StringComparison.Ordinal));
+            var mainCalls = graph.Edges.Where(e => e.From == gameMain.Id).Select(e => graph.Nodes[e.To].Name).ToList();
+            Assert.Contains("Config::Load", mainCalls);
+            Assert.DoesNotContain("LoginHandler::Init", mainCalls);      // 다른 main 의 호출이 섞이지 않는다
+
+            // 보내는 곳: 변수 타입으로 찾은 L2GEnter, 직접 쓴 G2CEnterResult, 레인 메시지
+            var login = graph.Nodes.Values.Single(n => n.Name == "LoginHandler::HandleLogin");
+            var enter = graph.Nodes.Values.Single(n => n.Name == "GameHandler::HandleEnter");
+            var tick = graph.Nodes.Values.Single(n => n.Name == "GameHandler::OnTick");
+            Assert.Contains(graph.Messages, m => m.Role == MessageRole.Send && m.NodeId == login.Id && m.Key == "L2GEnter" && m.How == "변수 타입");
+            Assert.Contains(graph.Messages, m => m.Role == MessageRole.Send && m.NodeId == enter.Id && m.Key == "G2CEnterResult" && m.How == "직접");
+            var laneEdge = Assert.Single(graph.Edges, e => e.From == enter.Id && e.To == tick.Id);
+            Assert.Equal("Message", laneEdge.Resolution);
+
+            // 여정: HandleEnter 앞은 LoginServer 의 HandleLogin, 뒤는 받는 곳 없는 G2CEnterResult
+            var index = new TraceIndex(graph);
+            var journey = new Journey(graph, index).Build(enter.Id);
+            var from = Assert.Single(journey.Upstream.Children);
+            Assert.Equal((login.Id, "C2LLogin", "LoginServer", "L2GEnter"), (from.NodeId, from.Key, from.Process, from.LinkKey));
+            Assert.Equal(JourneyKind.Origin, Assert.Single(from.Children).Kind);   // Init 의 Register(&...) 는 호출이 아니다
+            var exit = Assert.Single(journey.Downstream.Children);
+            Assert.Equal((JourneyKind.Exit, "G2CEnterResult"), (exit.Kind, exit.LinkKey));
+
+            // 표시: DB·캐시·작업 단위(레인 너머)·설정·네트워크
+            var tags = FlowSummary.Build(graph, index, enter.Id).Items.Select(i => $"{string.Join(",", i.Tags)}:{graph.Nodes[i.CalleeId].Name}").ToList();
+            Assert.Equal(["캐시:PlayerCache::Update", "작업 단위:UnitOfWork::Commit"], tags);
+            var loginDb = FlowSummary.Build(graph, index, login.Id).Items.Where(i => i.Tags.Contains("DB")).Select(i => (i.CalleeId.Length > 0 ? graph.Nodes[i.CalleeId].Name : "본문", i.Line)).ToList();
+            Assert.Equal([("Db::Query", 10), ("본문", 11)], loginDb);   // 호출로 잡히지 않는 DbCommand{"usp_..."} 줄도
+            var start = FlowSummary.Build(graph, index, gameMain.Id).Items.Select(i => i.Tags[0]).Distinct().ToList();
+            Assert.Equal(["설정", "등록", "네트워크"], start);
+
+            // 클래스: 부모와 멤버
+            var handler = graph.Types.Single(t => t.Name == "GameHandler");
+            Assert.Equal(["HandlerBase"], handler.Bases);
+            Assert.Contains(handler.Members, m => m.Name == "cache_" && m.Kind == "field");
+            Assert.Contains(handler.Members, m => m.Name == "HandleEnter" && m.Kind == "method");
+            Assert.Contains(graph.Types, t => t.Name == "HandlerBase");
+        }
+        finally
+        {
+            Directory.Delete(data, recursive: true);
+        }
+    }
 }

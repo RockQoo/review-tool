@@ -63,7 +63,7 @@ public static class FlowContext
                   .Append(lines.Count > 0 ? string.Join(",", lines) : "?");
                 if (edge is not null && TraceQueries.IsGuess(edge))
                 {
-                    sb.Append(" — **추정 연결**(").Append(edge.Resolution).Append("): 정적 호출이 아니라 등록 관계로 이은 것");
+                    sb.Append(" — **추정 연결**(").Append(edge.Resolution).Append("): ").Append(TraceQueries.ResolutionHint(edge.Resolution));
                 }
                 sb.Append('\n');
             }

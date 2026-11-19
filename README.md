@@ -46,6 +46,11 @@ AI 코드 리뷰(지적 목록)나 테스트를 대신하지 않는다. 그 지�
 | 문맥 복사 | 코드 스택의 흐름(경로·코드·호출 근거 파일:줄·추정 연결·못 본 것)을 Markdown 으로 복사. 코드 없이 구조만도 가능 |
 | AI 에게 질문 | 같은 문맥으로 Claude Code / Codex 를 헤드리스 실행해 답을 화면에 흘려 보여 줌. 자주 묻는 질문(실패 처리, 스레드, 입력 검증, 설명) 버튼 |
 | MCP 도구 | Claude Code·Codex 가 분석 결과를 직접 조회(`review-tool mcp`). 아래 "AI 연동" |
+| 패킷 여정 | 이 패킷이 오기까지(보낸 프로세스·함수·줄 → 중계 → 여기)와 여기서 보낸 패킷이 가는 프로세스·핸들러. 보낸 곳의 이름(`SendPacket(PacketId::X)`, 보낸 변수의 타입)과 X 를 받는 곳(핸들러, `case`)을 이어 **프로세스를 넘는 흐름**을 만든다 |
+| 메시지 연결 | 같은 프로세스 안 메시지(레인 등: `PushMsg(EMsg::X)` → `Regist(EMsg::X, &C::H)`)를 호출 선으로 이어 트리·영향 분석이 레인을 넘는다 |
+| 흐름 요약 | 진입점에서 소스 순서대로 표시(설정·스레드·등록·네트워크·DB·캐시·작업 단위)가 붙은 호출만. `main` 이면 시작 순서, 패킷 핸들러면 DB·캐시 접근 순서 |
+| 전체 흐름도 | 프로세스(빌드 프로젝트) × 클래스 지도. 클래스 사이 호출 수, 프로세스를 넘는 패킷. 고른 진입점이 거치는 클래스만 밝게 |
+| 클래스 다이어그램 | 흐름에 나온 클래스의 부모(상속)와 멤버(clangd 선언). 고른 흐름의 클래스만 또는 전체 |
 
 ## 리뷰 순서 예
 
@@ -77,6 +82,10 @@ codex mcp add review-tool -- dotnet <저장소>\src\ReviewTool.Cli\bin\Debug\net
 | `get_flow_context` | 진입점 → 함수 경로 전체를 Markdown 으로 (화면의 문맥 복사와 같음) |
 | `get_impact` | 바꾸면 영향받는 진입점과 경로 |
 | `compare` | 기준(수정 전)과 지금 분석의 구조 차이 |
+| `get_journey` | 패킷 여정: 오기까지와 나가는 곳(프로세스·함수·줄) |
+| `get_flow_summary` | 흐름 요약: 표시(DB·캐시·스레드 등)가 붙은 호출을 순서대로 |
+| `get_system_map` | 프로세스별 클래스, 클래스 사이 호출, 프로세스를 넘는 패킷 |
+| `get_class` | 클래스 선언: 부모·자식, 멤버, 분석된 함수 |
 
 MCP 서버는 저장된 분석 결과(`data/`)를 읽기만 한다. 분석을 돌리거나 파일을 쓰지 않는다.
 
@@ -97,9 +106,9 @@ MCP 서버는 저장된 분석 결과(`data/`)를 읽기만 한다. 분석을 �
 
 | 프로젝트 | 역할 |
 |---|---|
-| `ReviewTool.Core` | 언어와 무관한 결과 형식(`TraceGraph`), 대상 설정(`TargetConfig`), 저장 |
+| `ReviewTool.Core` | 언어와 무관한 결과 형식(`TraceGraph`), 대상 설정(`TargetConfig`), 저장, 조회(여정·요약·흐름도), 메시지 찾기(`MessagePass`, 소스 텍스트) |
 | `ReviewTool.Cpp` | C++ 어댑터. vcxproj → compile_commands.json, clangd 호출 계층으로 트리 생성 |
-| `ReviewTool.Web` | 화면. 진입점 목록 · 호출 트리 · 코드 스택 |
+| `ReviewTool.Web` | 화면. 진입점 목록 · 호출 트리 · 여정 · 요약 · 흐름도 · 클래스 · 코드 스택 |
 | `ReviewTool.Cli` | 화면 없이 분석(`analyze`), 요약(`show`), clangd 응답 확인(`probe`), MCP 서버(`mcp`) |
 
 ## 실행
@@ -128,9 +137,25 @@ MCP 서버는 저장된 분석 결과(`data/`)를 읽기만 한다. 분석을 �
 | `entryPoints[].pattern` | 진입점을 찾는 정규식. `(?<method>..)` 필수, `(?<class>..)` 권장 |
 | `hideCallees` | 로그처럼 잡음인 함수(정규식). 보이되 안으로 들어가지 않는다 |
 | `cpp.compileFrom` | `vcxproj`(프로젝트 파일에서 include·define 읽기) 또는 `flags` |
+| `channels` | 메시지 통로. `send`(보내는 호출), `key`(문장에서 이름 뽑기, `(?<key>..)`), `keyName`(이름 모양), `receive`(본문의 받는 곳, case 등), `register`(핸들러 등록, `key`·`method`·`class` → 진입점이 됨), `crossProcess`(true = 다른 프로세스로 가는 패킷, false = 같은 프로세스 안 메시지). 기본값은 흔한 패킷 모양 하나 |
+| `tags` | 함수 이름 규칙(정규식)으로 붙이는 표시. 흐름 요약에 쓴다. 기본값: 설정·스레드·등록·네트워크·DB·캐시·작업 단위 |
+
+프로세스는 진입점 파일에서 가장 가까운 빌드 프로젝트 폴더(`.vcxproj`·`CMakeLists.txt`)로 정한다. 프로젝트 폴더가 없으면 진입점 파일들의 공통 폴더 아래 첫 폴더.
+
+같은 프로세스 안 메시지 예(레인):
+
+```json
+"channels": [
+  { "name": "패킷", "crossProcess": true, "send": "\\bSend\\w*\\s*\\(", "key": "\\bPacketId::(?<key>\\w+)", "keyName": "^[A-Z][A-Za-z0-9]?2[A-Z]\\w+$",
+    "receive": "\\bcase\\s+(?:\\w+::)*PacketId::(?<key>\\w+)" },
+  { "name": "레인 메시지", "crossProcess": false, "send": "\\bPushMsg\\b", "key": "\\b(?<key>E\\w+Msg::\\w+)",
+    "register": "\\bRegist\\(\\s*(?<key>E\\w+Msg::\\w+)\\s*,\\s*&(?<class>\\w+)::(?<method>\\w+)" }
+]
+```
 
 ## 한계 (화면의 "못 본 것"에도 나온다)
 
 - **정적 분석**이다. 가상 함수·`std::function`·함수 포인터로 부르는 곳은 선언까지만 간다(`정의 없음`).
 - 디스패처처럼 "등록 → 나중에 호출" 구조는 등록 지점을 진입점으로 잡는 방식으로 우회한다.
+- 패킷 여정·메시지 연결·표시는 **소스 텍스트(정규식) 추정**이다. 실행 중에 정해지는 패킷 id(중계 봉투 안)는 이름으로 잇지 못하고 "안쪽 호출로 이어짐"으로 보인다. 보내는 곳은 분석한 함수(진입점에서 닿은 함수) 안에서만 찾는다.
 - 함수 본문 범위는 중괄호 짝으로 찾는 근사치다(매크로로 만든 함수는 틀릴 수 있다).

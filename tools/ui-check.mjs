@@ -162,6 +162,38 @@ await waitFor(`document.querySelector('.panes.mode-wide') && !!document.getEleme
 await sleep(800);
 await shot('8-wide');
 
+// 3단계 보기: 패킷 여정 → 받는 곳을 누르면 코드 스택이 열림 / 흐름 요약 / 전체 흐름도 / 클래스 다이어그램
+await evaluate(`document.querySelector('.views button[title^="패킷 여정"]').click()`);
+await waitFor(`!!document.querySelector('.journey h3')`);
+console.log('journey chains', await evaluate(`[...document.querySelectorAll('.chain')].map(c => c.innerText.replace(/\\s+/g, ' ').trim()).slice(0, 4)`));
+console.log('journey out', await evaluate(`document.querySelectorAll('.j-tree li').length`));
+await shot('11-journey');
+const opened = await evaluate(`(() => { const b = [...document.querySelectorAll('.chain .j-station')].find(b => !b.classList.contains('here')); if (!b) return null; b.click(); return b.innerText; })()`);
+await sleep(500);
+console.log('journey open', opened, '→ frames', await evaluate(`[...document.querySelectorAll('.frame .fname')].map(e => e.textContent)`));
+
+await evaluate(`document.querySelector('.views button[title^="흐름 요약"]').click()`);
+await waitFor(`!!document.querySelector('.summary')`);
+console.log('summary items', await evaluate(`document.querySelectorAll('.summary-list li').length`),
+  'tags', await evaluate(`[...document.querySelectorAll('.tag-chip')].map(t => t.innerText)`));
+await shot('12-summary');
+
+await evaluate(`document.querySelector('.views button[title^="전체 흐름도"]').click()`);
+await waitFor(`!!document.getElementById('map-canvas')?._cy`);
+await sleep(800);
+console.log('map', await evaluate(`(() => { const cy = document.getElementById('map-canvas')._cy; return { nodes: cy.nodes().length, packets: cy.edges('.packet').length, on: cy.nodes('.on').length }; })()`));
+await shot('13-map');
+await evaluate(`(() => { const cy = document.getElementById('map-canvas')._cy; cy.nodes('.on').filter(n => !n.hasClass('process'))[0]?.emit('tap'); })()`);
+await waitFor(`!!document.querySelector('.map-info')`, 5000);
+await shot('13b-map-info');
+
+await evaluate(`document.querySelector('.views button[title^="클래스 다이어그램"]').click()`);
+await waitFor(`!!document.getElementById('map-canvas')?._cy && document.getElementById('map-canvas')._cy.nodes('.uml').length > 0`);
+await sleep(800);
+console.log('classes', await evaluate(`(() => { const cy = document.getElementById('map-canvas')._cy; return { classes: cy.nodes().length, inherit: cy.edges('.inherit').length }; })()`));
+await shot('14-classes');
+await evaluate(`document.querySelector('.views button[title="트리 보기"]').click()`);
+
 // 대상 추가: 폴더 목록 → 경로 입력 → 설정 제안(저장은 하지 않고 취소)
 await click('button.icon-btn', '대상 추가');
 await waitFor(`!!document.querySelector('.setup .folders')`);

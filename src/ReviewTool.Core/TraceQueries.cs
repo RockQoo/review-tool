@@ -2,7 +2,7 @@ using System.Text;
 
 namespace ReviewTool.Core;
 
-// 호출 관계 빠른 조회. 엣지는 분석기가 호출자 본문의 소스 순서대로 넣었다.
+// 호출 관계 빠른 조회. 자식은 호출자 본문의 소스 순서(첫 호출 줄)대로다. 후처리로 붙인 추정 연결도 제자리에 온다.
 public sealed class TraceIndex
 {
     private static readonly List<TraceEdge> None = [];
@@ -10,7 +10,8 @@ public sealed class TraceIndex
 
     public TraceIndex(TraceGraph graph)
     {
-        children_ = graph.Edges.GroupBy(e => e.From).ToDictionary(g => g.Key, g => g.ToList());
+        children_ = graph.Edges.GroupBy(e => e.From).ToDictionary(g => g.Key,
+            g => g.OrderBy(e => e.CallSites.Count > 0 ? e.CallSites.Min(s => s.Line) : int.MaxValue).ToList());
         Callers = graph.Edges.GroupBy(e => e.To).ToDictionary(g => g.Key, g => g.Select(e => e.From).Distinct().ToList());
     }
 
@@ -45,6 +46,37 @@ public static class TraceQueries
     };
 
     public static bool IsGuess(TraceEdge e) => e.Resolution != "Static";
+
+    // 추정 연결의 화면 이름
+    public static string ResolutionText(string resolution) => resolution switch
+    {
+        "Registration" => "등록 연결(추정)",
+        "Message" => "메시지 연결(추정)",
+        _ => resolution,
+    };
+
+    // 호출이 아니라 함수 주소를 넘긴 것뿐인 선(Register(this, &C::H) 등). 색인은 이것도 호출로 준다.
+    // 모든 호출 위치의 줄에 "&...이름" 이 있고 바로 뒤에 "(" 가 없으면 그렇게 본다.
+    public static bool IsAddressOnly(TraceGraph graph, TraceEdge edge)
+    {
+        if (edge.Resolution != "Static" || edge.CallSites.Count == 0 ||
+            !graph.Nodes.TryGetValue(edge.From, out var from) || !graph.Nodes.TryGetValue(edge.To, out var to))
+        {
+            return false;
+        }
+        var name = to.Name.Split("::")[^1];
+        var pattern = new System.Text.RegularExpressions.Regex(
+            $@"&\s*(?:\w+::)*{System.Text.RegularExpressions.Regex.Escape(name)}\b(?!\s*\()");
+        var lines = from.Code.Split('\n');
+        return edge.CallSites.All(s => s.Line - from.StartLine is var i && i >= 0 && i < lines.Length && pattern.IsMatch(lines[i]));
+    }
+
+    public static string ResolutionHint(string resolution) => resolution switch
+    {
+        "Registration" => "정적 호출이 아니라 X.Dispatch(...) 를 같은 파일의 X.Register(...) 핸들러로 이은 것",
+        "Message" => "정적 호출이 아니라 메시지(레인 등)를 보낸 곳을 그 메시지 이름을 등록한 핸들러로 이은 것",
+        _ => "정적 호출이 아니라 추정으로 이은 것",
+    };
 
     // id 그대로, 이름 정확히, "::이름" 으로 끝남, 이름 일부(대소문자 무시) 순으로 찾는다.
     // 정확히 하나로 정해지면 그 하나, 아니면 후보들.

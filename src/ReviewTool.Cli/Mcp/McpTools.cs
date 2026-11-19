@@ -42,6 +42,21 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
             Schema(("target", "string", "대상 이름", true),
                    ("baseline", "string", "기준 id(기본 previous = 직전 분석). list_targets 에 기준 목록이 나온다", false)),
             a => Compare(Target(a), Opt(a, "baseline") ?? SnapshotStore.PreviousId)),
+        new("get_journey", "패킷 여정: 이 진입점에 패킷이 오기까지(보낸 프로세스·함수·줄)와 여기서 보내는 패킷이 어느 프로세스의 어느 핸들러로 가는지. " +
+                           "보낸 곳(SendPacket(X))과 X 를 받는 곳을 이름으로 잇는다(추정).",
+            Schema(("target", "string", "대상 이름", true), ("entry", "string", "진입점 표시 이름(C2ZMove 등)·함수 id·함수 이름", true)),
+            a => JourneyText(Target(a), Req(a, "entry"))),
+        new("get_flow_summary", "흐름 요약: 진입점에서 소스 순서대로 내려가며 표시(설정·스레드·등록·네트워크·DB·캐시·작업 단위)가 붙은 호출만. " +
+                                "main 이면 시작 순서, 패킷 핸들러면 DB·캐시 접근 순서.",
+            Schema(("target", "string", "대상 이름", true), ("entry", "string", "진입점 표시 이름·함수 id·함수 이름", true),
+                   ("tag", "string", "이 표시만(선택)", false)),
+            a => SummaryText(Target(a), Req(a, "entry"), Opt(a, "tag"))),
+        new("get_system_map", "전체 흐름도: 프로세스별 클래스와 클래스 사이 호출 수, 프로세스를 넘는 패킷.",
+            Schema(("target", "string", "대상 이름", true)),
+            a => MapText(Target(a))),
+        new("get_class", "클래스 선언: 파일:줄, 부모, 멤버(필드·메서드), 이 클래스의 분석된 함수.",
+            Schema(("target", "string", "대상 이름", true), ("name", "string", "클래스 이름(일부 가능)", true)),
+            a => ClassText(Target(a), Req(a, "name"))),
     ];
 
     private IReadOnlyList<Tool>? tools_;
@@ -243,6 +258,117 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
         foreach (var l in ImpactAnalyzer.Limits)
         {
             sb.Append("- ").Append(l).Append('\n');
+        }
+        return sb.ToString();
+    }
+
+    // 진입점 표시 이름(패킷 이름)이 정확히 맞으면 그 진입점, 아니면 함수로 찾는다
+    private static TraceNode ResolveEntry(TraceGraph g, string query)
+    {
+        var byLabel = g.EntryPoints.Where(e => e.Label == query.Trim()).ToList();
+        if (byLabel.Count == 1)
+        {
+            return g.Nodes[byLabel[0].NodeId];
+        }
+        if (byLabel.Count > 1)
+        {
+            throw new ToolError($"이 이름의 진입점이 {byLabel.Count}개입니다. id 로 고르세요:\n" +
+                                string.Join('\n', byLabel.Select(e => $"- {e.Label} · {e.Group}  id={e.NodeId}")));
+        }
+        return Resolve(g, query);
+    }
+
+    private static string EntryTitle(TraceGraph g, TraceNode n) =>
+        g.EntryPoints.FirstOrDefault(e => e.NodeId == n.Id) is { } e ? $"{e.Label} ({e.Group})" : n.Name;
+
+    private static string JourneyText((TraceGraph G, TraceIndex I) t, string entry)
+    {
+        var n = ResolveEntry(t.G, entry);
+        var journey = new Journey(t.G, t.I);
+        return journey.ToText(journey.Build(n.Id), EntryTitle(t.G, n));
+    }
+
+    private static string SummaryText((TraceGraph G, TraceIndex I) t, string entry, string? tag)
+    {
+        var n = ResolveEntry(t.G, entry);
+        var result = FlowSummary.Build(t.G, t.I, n.Id);
+        if (tag is not null)
+        {
+            result = result with { Items = result.Items.Where(i => i.Tags.Contains(tag)).ToList() };
+        }
+        return FlowSummary.ToText(t.G, result, EntryTitle(t.G, n) + (tag is null ? "" : $" [{tag}]"));
+    }
+
+    private static string MapText((TraceGraph G, TraceIndex I) t)
+    {
+        var map = SystemMap.Build(t.G, t.I);
+        var sb = new StringBuilder("# 전체 흐름도\n\n");
+        foreach (var p in map.Processes)
+        {
+            sb.Append("## ").Append(ProcessMap.Display(p)).Append('\n');
+            foreach (var c in map.Classes.Where(c => c.Process == p))
+            {
+                sb.Append("- ").Append(c.Id).Append("  함수 ").Append(c.Functions).Append(c.Entries > 0 ? $", 진입점 {c.Entries}" : "").Append('\n');
+            }
+            sb.Append('\n');
+        }
+        var packets = map.Links.Where(l => l.Kind == "packet").ToList();
+        sb.Append("## 프로세스를 넘는 패킷 ").Append(packets.Count).Append("개\n");
+        foreach (var l in packets)
+        {
+            sb.Append("- ").Append(l.From).Append(" → ").Append(l.To).Append(": ").Append(string.Join(", ", l.Keys)).Append('\n');
+        }
+        var calls = map.Links.Where(l => l.Kind != "packet").OrderByDescending(l => l.Count).Take(100).ToList();
+        sb.Append("\n## 클래스 사이 호출 (많은 순, 최대 100)\n");
+        foreach (var l in calls)
+        {
+            sb.Append("- ").Append(l.From).Append(" → ").Append(l.To).Append("  ").Append(l.Count).Append("곳")
+              .Append(l.Kind == "guess" ? " (추정 연결)" : "").Append('\n');
+        }
+        return sb.ToString();
+    }
+
+    private static string ClassText((TraceGraph G, TraceIndex I) t, string name)
+    {
+        if (t.G.Types.Count == 0)
+        {
+            throw new ToolError("이 분석 결과에는 클래스 정보가 없습니다. 재분석하면 생깁니다.");
+        }
+        var q = name.Trim();
+        var found = t.G.Types.Where(x => x.Name == q).ToList();
+        if (found.Count == 0)
+        {
+            found = t.G.Types.Where(x => x.Name.EndsWith("::" + q, StringComparison.Ordinal) ||
+                                         x.Name.Contains(q, StringComparison.OrdinalIgnoreCase)).Take(20).ToList();
+        }
+        if (found.Count != 1)
+        {
+            return found.Count == 0 ? "찾지 못했습니다. (흐름에 나온 클래스만 있습니다)"
+                : "여러 개입니다:\n" + string.Join('\n', found.Select(x => $"- {x.Name}  {x.File}:{x.Line}"));
+        }
+        var type = found[0];
+        var sb = new StringBuilder();
+        sb.Append("# ").Append(type.Kind).Append(' ').Append(type.Name).Append("  (").Append(type.File).Append(':').Append(type.Line).Append(")\n");
+        if (type.Bases.Count > 0)
+        {
+            sb.Append("부모: ").Append(string.Join(", ", type.Bases)).Append('\n');
+        }
+        var children = t.G.Types.Where(x => x.Bases.Contains(type.Name.Split("::")[^1])).Select(x => x.Name).ToList();
+        if (children.Count > 0)
+        {
+            sb.Append("자식: ").Append(string.Join(", ", children)).Append('\n');
+        }
+        sb.Append("\n## 멤버\n");
+        foreach (var m in type.Members)
+        {
+            sb.Append("- ").Append(m.Kind == "field" ? "필드 " : m.Kind == "ctor" ? "생성자 " : "메서드 ")
+              .Append(m.Name).Append(m.Detail.Length > 0 ? "  : " + m.Detail : "").Append('\n');
+        }
+        var functions = t.G.Nodes.Values.Where(n => SystemMap.ClassOf(n) == type.Name).OrderBy(n => n.StartLine).ToList();
+        sb.Append("\n## 분석된 함수 ").Append(functions.Count).Append("개\n");
+        foreach (var f in functions)
+        {
+            sb.Append("- ").Append(f.Name).Append("  ").Append(f.File).Append(':').Append(f.StartLine).Append("  id=").Append(f.Id).Append('\n');
         }
         return sb.ToString();
     }

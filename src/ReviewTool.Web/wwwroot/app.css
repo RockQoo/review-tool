@@ -359,3 +359,52 @@ select, input.search {
 .answer-text code { font-family: var(--mono); font-size: 12px; background: var(--panel); padding: 0 3px; border-radius: 3px; font-variant-ligatures: none; }
 .answer-text pre { background: var(--panel); padding: 6px 8px; border-radius: 4px; overflow: auto; }
 .answer-text pre code { padding: 0; background: none; }
+
+/* 3단계: 패킷 여정 · 흐름 요약 · 전체 흐름도 · 클래스 다이어그램 */
+.view-title { font-size: 12.5px; padding: 0 6px 8px; color: var(--muted); }
+.view-title b { color: var(--text); font-family: var(--mono); }
+.view-title .sub { font-size: 11px; margin-left: 6px; }
+.badge.tag { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
+.journey, .summary { padding: 0 6px 12px; font-size: 12.5px; }
+.journey h3 { font-size: 13px; margin: 6px 0 6px; }
+.journey h3 .count, .tag-chip .count, .compare-title .count { color: var(--muted); font-weight: normal; font-size: 11px; }
+.chain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 6px 0; border-bottom: 1px dotted var(--border); }
+.j-station { display: inline-flex; gap: 5px; align-items: baseline; font-family: var(--mono); font-size: 12px; padding: 2px 7px;
+             border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--text); cursor: pointer; font-variant-ligatures: none; }
+.j-station:hover { border-color: var(--accent); }
+.j-station.here { border-color: var(--accent); border-width: 2px; }
+.j-station.repeat { opacity: .7; border-style: dashed; }
+.j-station .proc, .map-info .proc { font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; font-family: inherit; }
+.j-station .key { color: var(--accent); }
+.j-station .sub { color: var(--muted); font-size: 10.5px; }
+.j-arrow { color: var(--muted); font-family: var(--mono); font-size: 11.5px; font-variant-ligatures: none; white-space: nowrap; }
+.j-arrow.packet { color: var(--accent); }
+.j-origin { color: var(--muted); font-size: 11.5px; }
+.j-tree ul { list-style: none; margin: 0; padding-left: 16px; border-left: 1px dotted var(--border); }
+.j-tree > ul { padding-left: 0; border-left: none; }
+.j-tree li { padding: 3px 0; }
+.j-send { font-family: var(--mono); font-size: 12px; font-variant-ligatures: none; }
+.j-send .loc, .summary-row .loc { color: var(--muted); font-size: 11px; margin-left: 4px; }
+.journey .limits, .summary .limits { margin-top: 12px; font-size: 12px; color: var(--muted); }
+.journey .limits ul, .summary .limits ul { margin: 4px 0 0; padding-left: 18px; }
+.tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.tag-chip { font-size: 11.5px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); cursor: pointer; }
+.tag-chip.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.summary-list { list-style: none; margin: 0; padding: 0; }
+.summary-list li { padding: 3px 0 3px calc(var(--depth) * 12px); border-bottom: 1px dotted var(--border); }
+.summary-row { display: inline-flex; gap: 6px; align-items: baseline; flex-wrap: wrap; text-align: left; }
+.summary-row .fn { font-family: var(--mono); font-variant-ligatures: none; }
+.summary-list .src { color: var(--muted); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 4px; }
+.mono { font-family: var(--mono); font-variant-ligatures: none; }
+.map-wrap { position: relative; flex: 1; display: flex; min-height: 200px; }
+.map-wrap .map-canvas { flex: 1; }
+.map-info { position: absolute; top: 8px; right: 8px; width: min(340px, 80%); max-height: calc(100% - 16px); overflow: auto;
+            background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, .15); }
+.map-info .frame-head { display: flex; gap: 6px; align-items: baseline; }
+.map-info .fname { font-family: var(--mono); font-weight: 600; overflow-wrap: anywhere; }
+.map-info .loc { color: var(--muted); font-size: 11px; }
+.map-info .members { list-style: none; margin: 4px 0 8px; padding: 0; }
+.map-info .members li { padding: 1px 0; overflow-wrap: anywhere; }
+.map-info .mk { color: var(--muted); font-size: 10.5px; }
+.map-info .compare-title { margin-top: 6px; font-weight: 600; }

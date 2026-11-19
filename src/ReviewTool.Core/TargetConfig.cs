@@ -24,6 +24,13 @@ public sealed class TargetConfig
     // X.Register(..&C::H) 한 핸들러로 선을 잇는다. 비우면 연결하지 않는다.
     public string DispatchCall { get; set; } = @"::Dispatch$";
 
+    // 메시지 통로: 보내는 줄에서 이름(key)을 뽑고, 같은 이름을 받는 곳과 잇는다(패킷 여정·레인 연결).
+    // 기본값은 흔한 패킷 모양 하나. 레인 메시지처럼 대상마다 다른 것은 여기에 더한다.
+    public List<MessageChannel> Channels { get; set; } = [MessageChannel.DefaultPacket()];
+
+    // 함수 이름 규칙으로 붙이는 표시(흐름 요약: 시작 순서, DB·캐시 접근 순서). 이름만 보는 추정이다.
+    public List<TagRule> Tags { get; set; } = TagRule.Defaults();
+
     public int MaxDepth { get; set; } = 8;
     public int MaxNodes { get; set; } = 3000;
     public int MaxCodeLines { get; set; } = 200;
@@ -88,6 +95,57 @@ public sealed class EntryPointRule
     public string Pattern { get; set; } = "";
     // 파일 glob. 비우면 Include 전체.
     public List<string> Files { get; set; } = [];
+}
+
+// 메시지 통로 하나. 정규식은 모두 소스 텍스트에 돈다.
+public sealed class MessageChannel
+{
+    public string Name { get; set; } = "";
+    // true: 다른 프로세스로 가는 패킷. false: 같은 프로세스 안 메시지(보낸 곳 → 핸들러를 호출 선으로 잇는다).
+    public bool CrossProcess { get; set; } = true;
+    // 보내는 호출(이 정규식이 걸린 문장에서 이름을 찾는다).
+    public string Send { get; set; } = "";
+    // 문장에서 이름을 뽑는 정규식. 이름 있는 그룹 key.
+    public string Key { get; set; } = "";
+    // 이름으로 인정하는 모양. 비우면 Key 가 뽑은 것을 다 인정한다.
+    // 문장에 이름이 없으면 보낸 변수의 선언 타입이 이 모양인지 본다("변수 타입" 추정).
+    // 진입점 표시 이름이 이 모양이면 그 진입점을 이 이름의 받는 곳으로 본다.
+    public string KeyName { get; set; } = "";
+    // 함수 본문 안에서 받는 곳(switch 의 case 등). 이름 있는 그룹 key.
+    public string Receive { get; set; } = "";
+    // 핸들러 등록: 그룹 key, method(필수), class(선택). 걸린 핸들러는 진입점이 된다.
+    public string Register { get; set; } = "";
+
+    public static MessageChannel DefaultPacket() => new()
+    {
+        Name = "패킷",
+        CrossProcess = true,
+        Send = @"\bSend\w*\s*\(",
+        Key = @"\b(?:PacketId|PacketType|Opcode|MsgId|ProtocolId)::(?<key>\w+)|\b(?<key>\w+)::k?PacketId\b",
+        KeyName = @"^[A-Z][A-Za-z0-9]?2[A-Z]\w+$",
+        Receive = @"\bcase\s+(?:\w+::)*(?:PacketId|PacketType|Opcode|MsgId|ProtocolId)::(?<key>\w+)",
+    };
+}
+
+public sealed class TagRule
+{
+    public string Name { get; set; } = "";
+    // 함수의 한정 이름(Ns::Class::Method)에 거는 정규식
+    public string Pattern { get; set; } = "";
+    // (선택) 함수 본문 줄에 거는 정규식. 호출로 잡히지 않는 것(SP 이름 문자열, 집합 초기화 DbCommand{...})용.
+    public string Code { get; set; } = "";
+
+    public static List<TagRule> Defaults() =>
+    [
+        new() { Name = "설정", Pattern = @"(?i)config|setting" },
+        new() { Name = "스레드", Pattern = @"(?i)thread|strand|lane|::run$|::start$|::join$" },
+        new() { Name = "등록", Pattern = @"(?i)::regist(er)?\w*$|::bind$|::add(handler|listener)\w*$" },
+        new() { Name = "네트워크", Pattern = @"(?i)listen|accept|connector|::connect\w*$" },
+        new() { Name = "DB", Pattern = @"(?i)(^|::|_)db|database|sql|query|storedproc",
+                Code = @"(?i)""[\w.\[\]]*?\b(usp|sp)_\w+|\bDbCommand\b" },
+        new() { Name = "캐시", Pattern = @"(?i)cache|redis" },
+        new() { Name = "작업 단위", Pattern = @"(?i)unitofwork|transaction|::commit$|::rollback$" },
+    ];
 }
 
 public sealed class CppOptions

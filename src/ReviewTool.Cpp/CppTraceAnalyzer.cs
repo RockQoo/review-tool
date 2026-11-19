@@ -85,6 +85,7 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
         var found = FindEntryPoints(config, filter);
         progress?.Report(new AnalysisProgress("entry", $"진입점 후보 {found.Count}개"));
         var groupPrefix = CommonDirectoryPrefix(found.Select(f => f.RelativeFile));
+        var projectDirs = ProjectDirectories(config);
 
         var done = 0;
         var registrations = new List<LinkPass.Registration>();
@@ -116,12 +117,14 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
             {
                 NodeId = root,
                 Label = MakeLabel(candidate, node),
-                Group = MakeGroup(candidate, groupPrefix),
+                Group = MakeGroup(candidate.RelativeFile, candidate.ClassName, groupPrefix, projectDirs),
                 RegisteredAt = new SourceRef { File = candidate.RelativeFile, Line = candidate.Line, Column = candidate.Column },
                 Detector = candidate.Rule.Name,
             });
             await walker.WalkAsync(root, cancellationToken);
         }
+
+        walker.PruneSharedSymbols();
 
         // 후처리: 정적 호출이 끊기는 디스패처·가상 함수를 소스 텍스트로 잇는다(clangd 에 파일을 새로 열지 않음)
         progress?.Report(new AnalysisProgress("link", "디스패처·가상 함수 연결 중"));
@@ -130,6 +133,19 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
         if (linked > 0 || impls > 0)
         {
             graph.Diagnostics.Add($"추정 연결: 디스패처 → 등록 핸들러 {linked}개, 가상 함수 구현 후보 {impls}개 (소스 텍스트 기반, 확실하지 않음)");
+        }
+
+        // 메시지(패킷·레인) 보내는 곳·받는 곳, 이름 표시. 소스 텍스트만 본다.
+        progress?.Report(new AnalysisProgress("link", "메시지 보내는 곳·받는 곳 찾는 중"));
+        var messages = MessagePass.Run(config, graph, ReadLines);
+        graph.Diagnostics.Add($"메시지(추정): 보내는 곳 {messages.Sends}개, 받는 곳 {messages.Receives}개, 같은 프로세스 안 메시지 연결 {messages.Linked}개 (설정 channels 의 정규식 기준)");
+
+        // 클래스 선언(멤버·부모). 호출 조회가 모두 끝난 뒤라 파일을 열어도 호출 결과에 영향이 없다.
+        progress?.Report(new AnalysisProgress("link", "클래스 선언 모으는 중"));
+        var types = await TypePass.CollectAsync(config, graph, session, filter, ReadLines, cancellationToken);
+        if (types.Missing > 0)
+        {
+            graph.Diagnostics.Add($"클래스 선언을 찾지 못함 {types.Missing}개 (템플릿·매크로로 만든 클래스일 수 있음)");
         }
 
         if (walker.NodeLimitHit)
@@ -154,7 +170,10 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
     // 파일을 한 번만 읽고 모든 규칙을 적용한다. 결과는 규칙 순서대로.
     internal static List<EntryCandidate> FindEntryPoints(TargetConfig config, Func<string, bool> filter)
     {
-        var rules = config.EntryPoints
+        // 메시지 통로의 핸들러 등록(Regist(EMsg::X, &C::H) 등)도 진입점이다. 표시 이름은 메시지 이름(key).
+        var channelRules = config.Channels.Where(c => !string.IsNullOrWhiteSpace(c.Register))
+            .Select(c => new EntryPointRule { Name = c.Name, Pattern = c.Register });
+        var rules = config.EntryPoints.Concat(channelRules)
             .Select(rule => (Rule: rule, Regex: new Regex(rule.Pattern, RegexOptions.Multiline),
                              Files: rule.Files.Count > 0 ? GlobMatcher.Build(rule.Files, []) : (_ => true)))
             .ToList();
@@ -187,7 +206,8 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
                     var (line, col) = ToLineColumn(lineStarts, method.Index);
                     perRule[r].Add(new EntryCandidate(rule, file, rel, line, col, method.Value,
                         m.Groups["class"].Success ? m.Groups["class"].Value : null,
-                        m.Groups["label"].Success ? m.Groups["label"].Value : null));
+                        m.Groups["label"].Success ? m.Groups["label"].Value
+                        : m.Groups["key"].Success ? m.Groups["key"].Value : null));
                 }
             }
         }
@@ -242,13 +262,31 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
 
     private static readonly Regex PacketParam = new(@"const\s+(?:\w+::)*([A-Z]\d?2[A-Z]\w+|[A-Z]2[A-Z]\w+)\s*&", RegexOptions.Compiled);
 
-    private static string MakeGroup(EntryCandidate candidate, string prefix)
+    // 묶음 = "프로젝트 / 클래스". 프로젝트는 파일에서 가장 가까운 빌드 프로젝트 폴더(vcxproj·CMakeLists.txt 가 있는 곳,
+    // 루트 제외) 이름이라 실행 파일 하나 = 프로세스 하나가 된다. 그런 폴더가 없으면 진입점 파일들의 공통 폴더 아래 첫 폴더.
+    internal static string MakeGroup(string relativeFile, string? className, string prefix, IReadOnlySet<string> projectDirs)
     {
-        var rel = candidate.RelativeFile[prefix.Length..];
+        var cls = className ?? Path.GetFileNameWithoutExtension(relativeFile);
+        var dir = relativeFile.Contains('/') ? relativeFile[..relativeFile.LastIndexOf('/')] : "";
+        for (; dir.Length > 0; dir = dir.Contains('/') ? dir[..dir.LastIndexOf('/')] : "")
+        {
+            if (projectDirs.Contains(dir))
+            {
+                return $"{dir.Split('/')[^1]} / {cls}";
+            }
+        }
+        var rel = relativeFile[prefix.Length..];
         var top = rel.Split('/')[0];
-        var cls = candidate.ClassName ?? Path.GetFileNameWithoutExtension(candidate.File);
         return top == rel ? cls : $"{top} / {cls}";
     }
+
+    private static HashSet<string> ProjectDirectories(TargetConfig config) =>
+        SourceFiles.Enumerate(config.Root, f => CompileDatabase.IsVcxproj(f) ||
+                                                Path.GetFileName(f).Equals("CMakeLists.txt", StringComparison.OrdinalIgnoreCase),
+                              config.Exclude)
+            .Select(f => Path.GetRelativePath(config.Root, Path.GetDirectoryName(f)!).Replace('\\', '/'))
+            .Where(d => d != ".")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private static string CommonDirectoryPrefix(IEnumerable<string> files)
     {

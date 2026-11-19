@@ -76,6 +76,8 @@ public sealed class ClangdSession : IAsyncDisposable
                 ["textDocument"] = new JsonObject
                 {
                     ["callHierarchy"] = new JsonObject { ["dynamicRegistration"] = false },
+                    // 클래스 멤버를 children 으로 받기 위해(TypePass)
+                    ["documentSymbol"] = new JsonObject { ["hierarchicalDocumentSymbolSupport"] = true },
                 },
             },
         };
