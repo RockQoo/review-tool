@@ -5,6 +5,7 @@
 @implements IAsyncDisposable
 @inject TraceWorkspace Workspace
 @inject IJSRuntime JS
+@inject EditorLauncher Editors
 
 <PageTitle>review-tool</PageTitle>
 
@@ -29,6 +30,18 @@
         {
             <button @onclick="Workspace.CancelAnalysis">취소</button>
         }
+        @if (Editors.Available.Count > 0)
+        {
+            <label class="editor-pick" title="코드 스택의 '열기'와 줄 번호를 누르면 이 편집기에서 연다">
+                편집기
+                <select value="@editorId" @onchange="OnEditorChanged">
+                    @foreach (var ed in Editors.Available)
+                    {
+                        <option value="@ed.Id">@ed.Name</option>
+                    }
+                </select>
+            </label>
+        }
         <span class="views" role="group" aria-label="보기 방식">
             @foreach (var (mode, icon, title) in ViewModes)
             {
@@ -39,6 +52,10 @@
             }
         </span>
         <span class="status">@Workspace.StatusMessage</span>
+        @if (notice is not null)
+        {
+            <span class="status notice" @onclick="() => notice = null" title="눌러서 닫기">@notice</span>
+        }
         @if (Workspace.LastError is not null)
         {
             <span class="error">@Workspace.LastError</span>
@@ -168,6 +185,14 @@
                             <span class="depth">@(i + 1)</span>
                             <span class="fname">@node.Name</span>
                             <span class="loc">@node.File:@node.StartLine</span>
+                            @if (node.Kind != NodeKind.External && Editors.Available.Count > 0)
+                            {
+                                var openFile = node.File;
+                                var openLineNo = node.StartLine;
+                                <button class="link icon-btn" title="편집기에서 열기" @onclick="() => OpenInEditor(openFile, openLineNo)">
+                                    <span class="ico" style="--icon: url('lib/lucide/square-arrow-out-up-right.svg')"></span> 열기
+                                </button>
+                            }
                             @if (i > 0)
                             {
                                 var site = CallLines(stack[i - 1], stack[i]).Order().FirstOrDefault();
@@ -196,7 +221,8 @@
                                          tabindex="@(hasCalls ? "0" : null)" role="@(hasCalls ? "button" : null)"
                                          @onclick="() => ToggleLine(frameIndex, lineNo, hasCalls)"
                                          @onkeydown="e => OnLineKey(e, frameIndex, lineNo, hasCalls)">
-                                        <span class="ln">@lineNo</span><span class="src">@lines[l]</span>
+                                        <span class="ln" title="편집기에서 이 줄 열기" @onclick="() => OpenInEditor(node.File, lineNo)"
+                                              @onclick:stopPropagation="true">@lineNo</span><span class="src">@lines[l]</span>
                                     </div>
                                     @if (isOpen && lineCalls is not null)
                                     {
@@ -306,6 +332,8 @@
         {
             graphModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/graph.js");
             selfRef = DotNetObjectReference.Create(this);
+            var savedEditor = await graphModule.InvokeAsync<string?>("getPref", "editor");
+            editorId = Editors.Available.Any(e => e.Id == savedEditor) ? savedEditor! : Editors.Available.FirstOrDefault()?.Id ?? "";
             var saved = await graphModule.InvokeAsync<string?>("getPref", "viewMode");
             if (saved is not null && saved != viewMode && ViewModes.Any(v => v.Mode == saved))
             {
@@ -553,6 +581,31 @@
     }
 
     private bool adding;
+
+    // ---- 편집기 열기 ----
+
+    private string editorId = "";
+
+    private async Task OnEditorChanged(ChangeEventArgs e)
+    {
+        editorId = e.Value?.ToString() ?? "";
+        if (graphModule is not null)
+        {
+            await graphModule.InvokeVoidAsync("setPref", "editor", editorId);
+        }
+    }
+
+    private void OpenInEditor(string relativeFile, int line)
+    {
+        if (graph is null)
+        {
+            return;
+        }
+        var full = Path.IsPathRooted(relativeFile) ? relativeFile : Path.Combine(graph.RootDirectory, relativeFile);
+        notice = Editors.Open(editorId, full, line) ?? $"편집기에서 엶: {relativeFile}:{line}";
+    }
+
+    private string? notice;
 
     private void OnTargetSaved((string Name, bool Analyze) saved)
     {

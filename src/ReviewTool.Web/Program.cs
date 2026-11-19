@@ -13,6 +13,7 @@ builder.WebHost.UseStaticWebAssets();
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 builder.Services.AddSingleton<TraceWorkspace>();
+builder.Services.AddSingleton<EditorLauncher>();
 
 var app = builder.Build();
 
