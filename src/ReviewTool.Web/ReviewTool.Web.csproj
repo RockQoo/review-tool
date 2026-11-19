@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\ReviewTool.Core\ReviewTool.Core.csproj" />
     <ProjectReference Include="..\ReviewTool.Cpp\ReviewTool.Cpp.csproj" />
+    <ProjectReference Include="..\ReviewTool.CSharp\ReviewTool.CSharp.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -145,11 +145,7 @@ public static partial class CompileDatabase
     public static bool IsVcxproj(string path) => path.EndsWith(".vcxproj", StringComparison.OrdinalIgnoreCase);
 
     // bin/obj/.vs 처럼 빌드 산출물 폴더는 설정과 무관하게 뺀다. 수 GB 가 될 수 있다.
-    public static bool IsBuildOutput(string relativePath)
-    {
-        var parts = relativePath.Replace('\\', '/').Split('/');
-        return parts.Any(p => p is "bin" or "obj" or ".vs" or ".git" or "x64" or "node_modules");
-    }
+    public static bool IsBuildOutput(string relativePath) => SourceFiles.IsBuildOutput(relativePath);
 
     internal sealed class VcxprojInfo
     {

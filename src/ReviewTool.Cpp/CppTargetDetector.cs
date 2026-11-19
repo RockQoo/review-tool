@@ -122,11 +122,7 @@ public static partial class CppTargetDetector
         return new TargetSuggestion(config, detected, notes, sourceCount);
     }
 
-    public static string SanitizeName(string name)
-    {
-        var s = InvalidName().Replace(name.Trim().ToLowerInvariant(), "-").Trim('-');
-        return s.Length == 0 ? "target" : s;
-    }
+    public static string SanitizeName(string name) => TargetConfig.SanitizeName(name);
 
     private static bool IsThirdParty(string relativePath) =>
         relativePath.Split('/').Any(p => ThirdPartyNames.Contains(p.ToLowerInvariant()));
@@ -170,21 +166,5 @@ public static partial class CppTargetDetector
         return dirs;
     }
 
-    [GeneratedRegex(@"[^a-z0-9_.-]+")]
-    private static partial Regex InvalidName();
 }
 
-public sealed record EntryPreset(string Name, string Pattern, List<string> Files, string Description)
-{
-    public EntryPointRule ToRule() => new() { Name = Name, Pattern = Pattern, Files = [.. Files] };
-}
-
-public sealed class DetectedPreset(EntryPreset preset, int matches, List<string> samples)
-{
-    public EntryPreset Preset { get; } = preset;
-    public int Matches { get; } = matches;
-    public List<string> Samples { get; } = samples;
-    public bool Enabled { get; set; }
-}
-
-public sealed record TargetSuggestion(TargetConfig Config, List<DetectedPreset> Presets, List<string> Notes, int SourceCount);

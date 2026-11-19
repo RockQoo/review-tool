@@ -21,11 +21,14 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\ReviewTool.Core\ReviewTool.Core.csproj" />
     <ProjectReference Include="..\..\src\ReviewTool.Cpp\ReviewTool.Cpp.csproj" />
+    <ProjectReference Include="..\..\src\ReviewTool.CSharp\ReviewTool.CSharp.csproj" />
     <ProjectReference Include="..\..\src\ReviewTool.Cli\ReviewTool.Cli.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <None Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <!-- 분석 대상 예제(C#)는 테스트 어셈블리에 컴파일하지 않는다 -->
+    <Compile Remove="Fixtures\**" />
   </ItemGroup>
 
 </Project>

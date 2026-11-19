@@ -24,6 +24,8 @@ AI 코드 리뷰(지적 목록)나 테스트를 대신하지 않는다. 그 지�
 |---|---|---|
 | 언어·런타임 | C# / .NET 10 | 분석·서버·화면을 한 언어로 |
 | C++ 해석 | clangd (LLVM) — LSP 로 대화 | 컴파일러 수준의 정확도. C++ 파서를 직접 만들지 않는다 |
+| C# 해석 | Roslyn (Microsoft.CodeAnalysis.CSharp) — .csproj 마다 컴파일 | 빌드·NuGet 복원 없이 .cs 만으로 호출 관계를 정확히 |
+| 데스크톱 창 | WinForms + WebView2, self-contained 단일 exe | 회사 PC 에 .NET 설치 없이 exe 하나로 |
 | 컴파일 옵션 | `.vcxproj` 읽기 → `compile_commands.json` 생성, vswhere 로 MSVC·Windows SDK 헤더 탐지 | Visual Studio 프로젝트를 그대로 분석 |
 | 서버·화면 | ASP.NET Core Blazor Server (127.0.0.1 전용) | 브라우저 화면 + 내 PC 파일 접근. 소스를 보여 주는 서버라 밖에서 접속되지 않게 |
 | 그래프 | Cytoscape.js | 노드 보기. 배치는 C# 이 계산해 넘긴다 |
@@ -51,6 +53,8 @@ AI 코드 리뷰(지적 목록)나 테스트를 대신하지 않는다. 그 지�
 | 흐름 요약 | 진입점에서 소스 순서대로 표시(설정·스레드·등록·네트워크·DB·캐시·작업 단위)가 붙은 호출만. `main` 이면 시작 순서, 패킷 핸들러면 DB·캐시 접근 순서 |
 | 전체 흐름도 | 프로세스(빌드 프로젝트) × 클래스 지도. 클래스 사이 호출 수, 프로세스를 넘는 패킷. 고른 진입점이 거치는 클래스만 밝게 |
 | 클래스 다이어그램 | 흐름에 나온 클래스의 부모(상속)와 멤버(clangd 선언). 고른 흐름의 클래스만 또는 전체 |
+| 공유 보고서 | 고른 진입점(또는 전체)의 호출 트리·여정·흐름 요약·점검을 Markdown 한 장으로. **기본은 소스 본문과 절대 경로를 뺀다**(회사 코드 공유 대비). 복사·내려받기(.md) |
+| C# 대상 | C++ 와 같은 화면·여정·점검을 C# 서버에도. 폴더에 C++ 소스가 없고 .csproj 가 있으면 자동으로 C# 으로 본다 |
 | 점검 규칙 | 대상 설정(`checks`)으로 켜는 규칙: 락 안 I/O, 작업 단위·레인 밖 접근, 차감 뒤 지급(되돌리기 없음), 금지된 의존. 지적마다 근거 파일:줄, 확실도(높음·보통·낮음)와 그 이유. 누르면 진입점부터의 경로가 코드 스택으로 열리고 근거 줄이 표시된다. 꺼진 규칙은 "꺼짐"으로 남는다 |
 
 ## 리뷰 순서 예
@@ -110,8 +114,10 @@ MCP 서버는 저장된 분석 결과(`data/`)를 읽기만 한다. 분석을 �
 |---|---|
 | `ReviewTool.Core` | 언어와 무관한 결과 형식(`TraceGraph`), 대상 설정(`TargetConfig`), 저장, 조회(여정·요약·흐름도), 메시지 찾기(`MessagePass`, 소스 텍스트) |
 | `ReviewTool.Cpp` | C++ 어댑터. vcxproj → compile_commands.json, clangd 호출 계층으로 트리 생성 |
+| `ReviewTool.CSharp` | C# 어댑터. .csproj 마다 Roslyn 컴파일(ProjectReference 연결), 진입점·호출 트리·클래스 선언 |
+| `ReviewTool.Desktop` | 데스크톱 창. 화면 서버를 같은 프로세스에서 127.0.0.1 빈 포트로 띄우고 WebView2 로 보여 준다 |
 | `ReviewTool.Web` | 화면. 진입점 목록 · 호출 트리 · 여정 · 요약 · 흐름도 · 클래스 · 코드 스택 |
-| `ReviewTool.Cli` | 화면 없이 분석(`analyze`), 요약(`show`), 점검(`check`, `--strict` 면 확실도 높음 지적이 있을 때 종료 코드 3), clangd 응답 확인(`probe`), MCP 서버(`mcp`) |
+| `ReviewTool.Cli` | 화면 없이 분석(`analyze`), 요약(`show`), 공유 보고서(`report`), 점검(`check`, `--strict` 면 확실도 높음 지적이 있을 때 종료 코드 3), clangd 응답 확인(`probe`), MCP 서버(`mcp`) |
 
 ## 실행
 
@@ -122,6 +128,14 @@ MCP 서버는 저장된 분석 결과(`data/`)를 읽기만 한다. 분석을 �
 .\run.ps1 -Analyze    # 화면 없이 분석만
 ```
 
+**데스크톱 창(설치 없이 exe 하나)**: `.\tools\publish-desktop.ps1` → `dist\review-tool.exe`.
+.NET 런타임이 들어 있어 설치가 필요 없고(WebView2 는 Windows 11 기본), 화면 파일은 처음 실행할 때 `%LOCALAPPDATA%\review-tool\web\` 에 풀린다.
+대상 설정·분석 결과는 exe 옆의 `targets\`, `data\` 에 생긴다. C++ 분석(재분석)에는 LLVM(clangd)과 Visual Studio C++ 도구가 따로 있어야 한다(결과 보기·C# 분석은 없어도 된다).
+`review-tool.exe --self-test` 는 창 없이 화면 파일이 제대로 나오는지 확인한다.
+
+**공유 보고서**: 화면 위 **보고서** → 범위·항목 고르기 → **만들기** → 복사 또는 내려받기. 명령줄은
+`review-tool report targets/<이름>.json [--entry C2SLogin]... [--source] [--abs-paths] [--out 보고서.md]`.
+
 ## 대상 추가
 
 폴더만 고르면 설정(`targets/<이름>.json`)을 자동으로 만든다. 이 파일은 내 PC 경로가 들어 있어 git 에 올리지 않는다.
@@ -130,6 +144,9 @@ MCP 서버는 저장된 분석 결과(`data/`)를 읽기만 한다. 분석을 �
 - 명령줄: `dotnet run --project src/ReviewTool.Cli -- init <분석할 폴더> [--name 이름]`
 
 원본 저장소에는 아무것도 쓰지 않는다(clangd 설정과 색인 캐시도 `data/<이름>/clangd/` 에 생긴다).
+폴더에 C++ 소스(.cpp/.h, .vcxproj)가 없고 .csproj·.cs 가 있으면 C# 대상(`"language": "csharp"`)으로 만든다.
+C# 진입점 규칙: 메서드 등록(`Register(PacketId.X, HandleX)`), 핸들러 특성(`[PacketHandler]`), API 컨트롤러 액션(`[HttpPost]`),
+Handle* 메서드, 시작 함수(`static void Main`, 최상위 문). 패킷 통로 기본값은 C# 모양(`PacketId.X`, `case PacketId.X`)이다.
 자동 감지가 틀리면 json 을 직접 고친다.
 
 | 키 | 뜻 |
@@ -188,5 +205,7 @@ MCP 서버는 저장된 분석 결과(`data/`)를 읽기만 한다. 분석을 �
 - 디스패처처럼 "등록 → 나중에 호출" 구조는 등록 지점을 진입점으로 잡는 방식으로 우회한다.
 - 패킷 여정·메시지 연결·표시는 **소스 텍스트(정규식) 추정**이다. 실행 중에 정해지는 패킷 id(중계 봉투 안)는 이름으로 잇지 못하고 "안쪽 호출로 이어짐"으로 보인다. 보내는 곳은 분석한 함수(진입점에서 닿은 함수) 안에서만 찾는다.
 - 함수 본문 범위는 중괄호 짝으로 찾는 근사치다(매크로로 만든 함수는 틀릴 수 있다).
+- C# 은 .cs 파일만 해석한다(빌드·NuGet 복원 없음). 참조는 이 도구가 도는 .NET 런타임 어셈블리뿐이라 NuGet 패키지 형식의 호출은 풀지 못하고(진단에 수가 나온다),
+  소스 생성기(Razor 컴포넌트 등)가 만든 코드는 보지 않는다. 한정 이름은 C++ 과 같이 `Ns::Class::Method` 로 보인다.
 - 점검 규칙은 분석에서 펼친 함수만 본다(`hideCallees` 로 숨긴 함수 안, 람다 안, 깊이 제한 너머는 안 본다). 지적이 없다는 것은 "찾지 못했다"는 뜻이다.
   `#include` 는 컴파일러의 include 경로를 보지 않고, 같은 이름 파일 중 가장 가까운 폴더의 것으로 본다.

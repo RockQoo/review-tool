@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- C# 어댑터: Roslyn 으로 소스를 직접 해석한다(MSBuild·NuGet 복원 없이 .cs 파일만). 진입점·호출 트리까지. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
+    <ProjectReference Include="..\ReviewTool.Core\ReviewTool.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ReviewTool.Tests" />
+  </ItemGroup>
+
+</Project>

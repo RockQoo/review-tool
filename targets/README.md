@@ -24,3 +24,7 @@
 - `checks`: 규칙 목록. 종류는 `forbidInScope`(락 안 I/O 등), `requireWithin`(작업 단위·레인 밖 접근), `order`(차감 뒤 지급),
   `dependency`(금지된 의존). 기본값은 락 안 I/O 만 켜져 있고 나머지는 꺼져 있다. 대상의 이름(클래스·폴더)에 맞춰 정규식·glob 을 고치고
   `"enabled": true` 로 켠다. 예와 키 설명은 README "점검 규칙". 점검만 바꾸면 재분석할 필요가 없다(화면의 "다시 점검").
+
+C# 대상: 폴더에 C++ 소스가 없고 `.csproj`·`.cs` 가 있으면 `"language": "csharp"` 설정을 만든다. 진입점 규칙은 C# 모양
+(메서드 등록, `[PacketHandler]`, `[HttpPost]` 액션, Handle* 메서드, `Main`·최상위 문)이고, `channels` 기본값도 `PacketId.X` 모양이다.
+테스트 폴더(`*Tests`)와 bin/obj 는 범위에서 뺀다.

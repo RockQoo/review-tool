@@ -122,6 +122,7 @@ internal static class CliMain
         ITraceAnalyzer analyzer = config.Language switch
         {
             "cpp" => new CppTraceAnalyzer(),
+            "csharp" => new ReviewTool.CSharp.CSharpTraceAnalyzer(),
             _ => throw new NotSupportedException($"지원하지 않는 언어: {config.Language}"),
         };
         var graph = await analyzer.AnalyzeAsync(config, paths, progress, cts.Token);
@@ -162,7 +163,10 @@ internal static class CliMain
 
     private static int Init(string[] args)
     {
-        var suggestion = CppTargetDetector.Suggest(args[1], Option(args, "--name"));
+        // C++ 소스가 없고 .csproj·.cs 가 있으면 C# 감지기
+        var suggestion = ReviewTool.CSharp.CSharpTargetDetector.LooksLikeCSharp(args[1])
+            ? ReviewTool.CSharp.CSharpTargetDetector.Suggest(args[1], Option(args, "--name"))
+            : CppTargetDetector.Suggest(args[1], Option(args, "--name"));
         var config = suggestion.Config;
         var targets = Path.Combine(FindRepoRoot(), "targets");
         string path;
@@ -176,8 +180,10 @@ internal static class CliMain
             return 1;
         }
         Console.WriteLine($"대상 {config.Name}: {config.Root}");
-        Console.WriteLine($"  컴파일 옵션: {config.Cpp.CompileFrom} · 범위 {(config.Include.Count == 0 ? "전체" : string.Join(", ", config.Include))}" +
-                          $"{(config.Exclude.Count > 0 ? " 제외 " + string.Join(", ", config.Exclude) : "")} · .cpp {suggestion.SourceCount}개");
+        var how = config.Language == "csharp" ? "언어 C# (Roslyn)" : $"컴파일 옵션: {config.Cpp.CompileFrom}";
+        var ext = config.Language == "csharp" ? ".cs" : ".cpp";
+        Console.WriteLine($"  {how} · 범위 {(config.Include.Count == 0 ? "전체" : string.Join(", ", config.Include))}" +
+                          $"{(config.Exclude.Count > 0 ? " 제외 " + string.Join(", ", config.Exclude) : "")} · {ext} {suggestion.SourceCount}개");
         foreach (var p in suggestion.Presets)
         {
             Console.WriteLine($"  [{(p.Enabled ? "x" : " ")}] {p.Preset.Name}: {p.Matches}개 {string.Join(", ", p.Samples)}");

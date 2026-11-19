@@ -33,7 +33,9 @@ public sealed class TraceWorkspace(IConfiguration configuration, IWebHostEnviron
 
     // ---- 대상 추가 (폴더 고르기 → 설정 제안 → 저장) ----
 
-    public TargetSuggestion Suggest(string folder) => CppTargetDetector.Suggest(folder);
+    // C++ 소스가 없고 .csproj·.cs 가 있으면 C# 감지기
+    public TargetSuggestion Suggest(string folder) =>
+        ReviewTool.CSharp.CSharpTargetDetector.LooksLikeCSharp(folder) ? ReviewTool.CSharp.CSharpTargetDetector.Suggest(folder) : CppTargetDetector.Suggest(folder);
 
     public string SaveTarget(TargetConfig config, bool overwrite)
     {
@@ -88,7 +90,7 @@ public sealed class TraceWorkspace(IConfiguration configuration, IWebHostEnviron
     {
         try
         {
-            return dir.EnumerateFiles().Any(f => f.Extension is ".sln" or ".slnx" or ".vcxproj" ||
+            return dir.EnumerateFiles().Any(f => f.Extension is ".sln" or ".slnx" or ".vcxproj" or ".csproj" ||
                                                  f.Name is "CMakeLists.txt" or "compile_flags.txt" or "compile_commands.json");
         }
         catch (UnauthorizedAccessException)
@@ -142,6 +144,7 @@ public sealed class TraceWorkspace(IConfiguration configuration, IWebHostEnviron
     public static ITraceAnalyzer AnalyzerFor(string language) => language switch
     {
         "cpp" => new CppTraceAnalyzer(),
+        "csharp" => new ReviewTool.CSharp.CSharpTraceAnalyzer(),
         _ => throw new NotSupportedException($"지원하지 않는 언어: {language}"),
     };
 

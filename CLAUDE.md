@@ -12,7 +12,7 @@ C++(나중에 C#) 서버 코드의 호출 흐름을 보여 주는 개인 리뷰 
 - 프로젝트 파일·커밋 메시지에 참고한 사람이나 다른 프로젝트 이름을 적지 않는다. 기능은 자체 용어로 설명한다
   (가져다 쓴 라이브러리의 LICENSE 동봉은 예외: `wwwroot/lib/`).
 - 화면 서버는 `127.0.0.1` 에만 바인딩한다. 바꾸는 옵션을 만들지 않는다.
-- 언어 어댑터는 `ITraceAnalyzer` 를 구현하고 `TraceGraph` 만 채운다. 화면은 언어를 모른다.
+- 언어 어댑터는 `ITraceAnalyzer` 를 구현하고 `TraceGraph` 만 채운다. 화면은 언어를 모른다(C++: clangd, C#: Roslyn).
 - "못 본 것"은 `TraceGraph.Diagnostics` / `TraceNode.Stop` 으로 남긴다. 빈 호출 목록을 "호출 없음"으로 보이게 하지 않는다.
 - 주석과 문서는 한국어.
 - AI 연동(2단계): AI CLI 는 사용자가 "보내기"를 누를 때만 실행한다. 인자는 고정값만 쓰고, 질문·코드는 표준 입력으로 넘긴다.
@@ -31,6 +31,11 @@ C++(나중에 C#) 서버 코드의 호출 흐름을 보여 주는 개인 리뷰 
 - 4단계 점검 규칙(`Checks`)은 **분석 결과에 저장하지 않고** 저장된 결과 + 설정 `checks` 로 그때그때 돈다. 그래서 `checks` 는
   `TargetConfig.ContentHash` 에서 뺀다(규칙만 고쳤는데 "설정 바뀜"이 되지 않게). 규칙 종류는 범용 4가지
   (`forbidInScope`·`requireWithin`·`order`·`dependency`)이고, 특정 저장소 이름은 기본값이 아니라 `targets/*.json` 에 둔다.
+- 5단계: 공유 보고서(`ShareReport`)는 기본으로 소스 본문·절대 경로를 뺀다(회사 코드). 넣는 것은 사용자가 옵션을 켤 때만.
+- 화면 서버 구성은 `ReviewToolServer.Build` 하나다. 명령줄(`ReviewTool.Web`)과 데스크톱 창(`ReviewTool.Desktop`, 127.0.0.1 빈 포트 + WebView2)이 같이 쓴다.
+  단일 exe 는 Web SDK 가 정적 파일을 묶음에서 빼므로 화면 파일을 zip 리소스로 넣고 `%LOCALAPPDATA%\review-tool\web\<해시>` 에 풀어 쓴다(`WebAssets`).
+- C# 어댑터(`ReviewTool.CSharp`)는 .csproj 마다 Roslyn 컴파일(같은 이름 `Program` 이 섞이지 않게), 노드 id 에 어셈블리 이름을 붙인다.
+  한정 이름은 C++ 과 같이 `::` 로 잇는다(화면·흐름도·표시 규칙이 언어와 무관하게). 언어와 무관한 도우미(`SourceFiles`, `TargetSuggestion`)는 Core 에 둔다.
 - 모든 지적은 근거(파일:줄)·확실도·그 이유를 단다. 꺼진 규칙은 "꺼짐", 잘못된 규칙은 "오류"로 남긴다(조용히 빼지 않는다).
 
 ## clangd 사용 요령 (실측, 바꾸기 전에 읽을 것)
@@ -50,7 +55,8 @@ C++(나중에 C#) 서버 코드의 호출 흐름을 보여 주는 개인 리뷰 
 ## 확인 방법
 
 ```powershell
-dotnet test ReviewTool.slnx                                   # 단위 + clangd 종단 테스트(작은 예제)
+dotnet test ReviewTool.slnx                                   # 단위 + clangd 종단 테스트(작은 예제) + C# 어댑터(Fixtures/csharp)
+.\tools\publish-desktop.ps1                                    # 데스크톱 단일 exe(dist/) + self-test
 dotnet run --project src/ReviewTool.Cli -- init <분석할 폴더>    # 설정이 없을 때
 dotnet run --project src/ReviewTool.Cli -- analyze targets/<이름>.json
 node tools/ui-check.mjs                                        # 서버가 떠 있을 때: 헤드리스 Edge 로 클릭·스크린샷(data/ui-check/)

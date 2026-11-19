@@ -9,7 +9,7 @@
 
     @if (suggestion is null)
     {
-        <p class="hint-line">분석할 C++ 서버 저장소 폴더를 고르세요. <span class="proj-mark">프로젝트</span> 표시는 .sln/.vcxproj/CMakeLists.txt 가 있는 폴더입니다.</p>
+        <p class="hint-line">분석할 서버 저장소 폴더를 고르세요(C++ 또는 C#). <span class="proj-mark">프로젝트</span> 표시는 .sln/.vcxproj/.csproj/CMakeLists.txt 가 있는 폴더입니다.</p>
         <div class="path-row">
             <input class="path" @bind="path" @bind:event="oninput" placeholder="예: D:\Work\MyServer" @onkeydown="OnPathKey" />
             <button @onclick="() => Browse(path)">이동</button>
@@ -51,10 +51,14 @@
         <div class="form">
             <label>이름 <input @bind="c.Name" /></label>
             <div class="row"><span class="k">폴더</span><span class="v mono">@c.Root</span></div>
-            <div class="row"><span class="k">컴파일 옵션</span><span class="v">@(c.Cpp.CompileFrom == "vcxproj" ? "Visual Studio 프로젝트(.vcxproj)에서 읽음" : "compile_flags / 추측")</span></div>
+            <div class="row"><span class="k">언어</span><span class="v">@(c.Language == "csharp" ? "C# (Roslyn, .cs 파일만 해석)" : "C++ (clangd)")</span></div>
+            @if (c.Language == "cpp")
+            {
+                <div class="row"><span class="k">컴파일 옵션</span><span class="v">@(c.Cpp.CompileFrom == "vcxproj" ? "Visual Studio 프로젝트(.vcxproj)에서 읽음" : "compile_flags / 추측")</span></div>
+            }
             <label>분석 범위 <input class="mono" value="@string.Join(", ", c.Include)" @onchange="e => c.Include = SplitList(e.Value)" placeholder="비우면 전체 (예: Server/**)" /></label>
             <label>제외 <input class="mono" value="@string.Join(", ", c.Exclude)" @onchange="e => c.Exclude = SplitList(e.Value)" placeholder="예: 3rd/**" /></label>
-            <div class="row"><span class="k">.cpp</span><span class="v">@(suggestion.SourceCount)개</span></div>
+            <div class="row"><span class="k">@(c.Language == "csharp" ? ".cs" : ".cpp")</span><span class="v">@(suggestion.SourceCount)개</span></div>
 
             <div class="presets">
                 <div class="k">진입점(패킷 핸들러) 찾는 규칙</div>

@@ -148,7 +148,12 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
     {
         try
         {
-            ITraceAnalyzer analyzer = config.Language == "cpp" ? new CppTraceAnalyzer() : throw new NotSupportedException(config.Language);
+            ITraceAnalyzer analyzer = config.Language switch
+            {
+                "cpp" => new CppTraceAnalyzer(),
+                "csharp" => new ReviewTool.CSharp.CSharpTraceAnalyzer(),
+                _ => throw new NotSupportedException(config.Language),
+            };
             var r = Freshness.Evaluate(g, analyzer.EnumerateInputs(config), config.ContentHash());
             return r.State switch
             {

@@ -47,8 +47,8 @@ public sealed class CheckRule
         {
             Name = "락 안에서 I/O", Kind = Checks.ForbidInScope,
             Description = "뮤텍스를 잡은 채 네트워크·파일·DB·대기를 하면 다른 스레드가 그만큼 멈춥니다.",
-            // m.lock(); 은 문장 맨 앞일 때만(if (auto s = weak.lock()) 같은 weak_ptr 는 잠금이 아니다)
-            ScopeOpen = @"\b(?:std::)?(?:lock_guard|unique_lock|scoped_lock|shared_lock)\b|^\s*(?:[\w\[\]]+(?:\.|->))+lock\s*\(\s*\)\s*;",
+            // m.lock(); 은 문장 맨 앞일 때만(if (auto s = weak.lock()) 같은 weak_ptr 는 잠금이 아니다). C# 은 lock (x) { } 문.
+            ScopeOpen = @"\b(?:std::)?(?:lock_guard|unique_lock|scoped_lock|shared_lock)\b|^\s*(?:[\w\[\]]+(?:\.|->))+lock\s*\(\s*\)\s*;|^\s*lock\s*\(",
             ScopeClose = @"\.unlock\s*\(\s*\)",
             Forbid = @"(?i)(^|::)(send\w*|async_\w+|write\w*|read\w*|recv\w*|query\w*|execute\w*|connect\w*|flush\w*|fopen|fwrite|fread|fprintf|sleep\w*|wait\w*)$",
             ForbidTags = ["DB", "네트워크"],
@@ -480,8 +480,11 @@ public static class Checks
         a.Line != b.Line ? a.Line.CompareTo(b.Line) : a.Column.CompareTo(b.Column);
 
     // 여는 곳(match 끝)부터 중괄호를 세어, 그 블록이 닫히는 '}' 또는 같은 깊이에서 close 가 걸린 곳(둘 다 범위 밖 첫 위치)
+    // 잠금이 문장(lock_guard l(m); / m.lock();)이면 그 줄이 속한 블록 끝까지, 뒤에 블록이 따라오면(C# lock (x) { } ·
+    // using (...) { }) 그 블록 끝까지.
     private static ((int Line, int Column) End, bool Reached) BlockEnd(string[] lines, int start, int column, Regex close)
     {
+        var ownBlock = OwnsBlock(lines, start, column);
         var depth = 0;
         for (var i = start; i < lines.Length; i++)
         {
@@ -498,13 +501,40 @@ public static class Checks
                 {
                     depth++;
                 }
-                else if (text[k] == '}' && --depth < 0)
+                else if (text[k] == '}' && (--depth < 0 || (ownBlock && depth == 0)))
                 {
                     return ((i, k), true);
                 }
             }
         }
         return ((lines.Length - 1, int.MaxValue), false);
+    }
+
+    // 여는 곳 뒤에서 ';' 보다 '{' 가 먼저 오고 그 '{' 바로 앞이 ')' 이면(lock (x) {) 뒤따르는 블록이 범위다.
+    // scoped_lock l{m}; 의 '{' 는 앞이 이름이라 초기화로 본다.
+    private static bool OwnsBlock(string[] lines, int start, int column)
+    {
+        var last = ' ';
+        for (var i = start; i < lines.Length && i < start + 4; i++)
+        {
+            for (var k = i == start ? column : 0; k < lines[i].Length; k++)
+            {
+                var ch = lines[i][k];
+                if (ch == ';')
+                {
+                    return false;
+                }
+                if (ch == '{')
+                {
+                    return last == ')';
+                }
+                if (!char.IsWhiteSpace(ch))
+                {
+                    last = ch;
+                }
+            }
+        }
+        return false;
     }
 
     // 여는 곳 뒤 문장 끝 ';' 까지(최대 8줄)

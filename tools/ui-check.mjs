@@ -207,6 +207,15 @@ if (await evaluate(`!!document.querySelector('.finding-row')`)) {
 }
 await evaluate(`document.querySelector('.views button[title="트리 보기"]').click()`);
 
+// 5단계: 공유 보고서(기본은 소스 본문·절대 경로 뺌)
+await click('button.icon-btn', '보고서');
+await waitFor(`!!document.querySelector('.report')`);
+await click('.report .compare-bar button.link', '만들기');
+await waitFor(`!!document.querySelector('.report-text')`);
+console.log('report', await evaluate(`(() => { const t = document.querySelector('.report-text').textContent; return { chars: t.length, head: t.split('\\n')[0], hasCodeFence: t.includes('\`\`\`\\nvoid ') }; })()`));
+await shot('16-report');
+await click('.report .compare-bar button.close');
+
 // 대상 추가: 폴더 목록 → 경로 입력 → 설정 제안(저장은 하지 않고 취소)
 await click('button.icon-btn', '대상 추가');
 await waitFor(`!!document.querySelector('.setup .folders')`);

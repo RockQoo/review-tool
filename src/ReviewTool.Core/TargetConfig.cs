@@ -78,6 +78,13 @@ public sealed class TargetConfig
         return Freshness.HashText(node.ToJsonString(JsonOptions));
     }
 
+    // 대상 이름 = 파일 이름(targets/<이름>.json)이라 소문자·숫자·_.- 만 남긴다
+    public static string SanitizeName(string name)
+    {
+        var s = System.Text.RegularExpressions.Regex.Replace(name.Trim().ToLowerInvariant(), @"[^a-z0-9_.-]+", "-").Trim('-');
+        return s.Length == 0 ? "target" : s;
+    }
+
     public static TargetConfig Load(string path)
     {
         var config = JsonSerializer.Deserialize<TargetConfig>(File.ReadAllText(path), JsonOptions)

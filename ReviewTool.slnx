@@ -3,6 +3,7 @@
     <Project Path="src/ReviewTool.Cli/ReviewTool.Cli.csproj" />
     <Project Path="src/ReviewTool.Core/ReviewTool.Core.csproj" />
     <Project Path="src/ReviewTool.Cpp/ReviewTool.Cpp.csproj" />
+    <Project Path="src/ReviewTool.CSharp/ReviewTool.CSharp.csproj" />
     <Project Path="src/ReviewTool.Desktop/ReviewTool.Desktop.csproj" />
     <Project Path="src/ReviewTool.Web/ReviewTool.Web.csproj" />
   </Folder>
