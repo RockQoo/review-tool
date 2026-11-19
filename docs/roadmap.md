@@ -22,13 +22,13 @@ AI가 고친 C++ 게임 서버 코드를 **사람이 흐름으로 확인**하는
 
 남은 것: 디스패처가 레인(다른 스레드)을 거쳐 호출되는 경로는 3단계 "패킷 여정"에서 잇는다.
 
-## 2단계 — AI 연동
+## 2단계 — AI 연동 ✅ 완료
 
-| 기능 | 내용 |
-|---|---|
-| 문맥 복사 | 선택한 흐름(진입점→함수 경로, 코드, 호출 근거, 못 본 것)을 Markdown 으로 복사 |
-| Claude Code 실행 | 화면에서 질문 → 같은 문맥으로 `claude` CLI 헤드리스 실행, 답을 스트리밍 |
-| MCP 도구 | `get_entrypoints`, `get_flow`, `get_impact`, `get_source`, `compare` 등. Claude Code·Codex 에서 직접 조회 |
+| 기능 | 내용 | 상태 |
+|---|---|---|
+| 문맥 복사 | 선택한 흐름(진입점→함수 경로, 코드, 호출 근거, 못 본 것)을 Markdown 으로 복사. 코드 빼기 옵션 | ✅ |
+| AI 에게 질문 | 화면에서 질문 → 같은 문맥으로 Claude Code / Codex CLI 헤드리스 실행(읽기 전용), 답을 스트리밍 | ✅ |
+| MCP 도구 | `list_targets`, `get_entrypoints`, `find_functions`, `get_flow`, `get_source`, `get_flow_context`, `get_impact`, `compare`. Claude Code·Codex 에서 직접 조회 | ✅ |
 
 ## 3단계 — 게임 서버 보기
 

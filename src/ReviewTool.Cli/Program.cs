@@ -5,6 +5,7 @@ using ReviewTool.Cpp;
 //   review-tool analyze <targets/이름.json> [--data <폴더>]
 //   review-tool show    <targets/이름.json> [--data <폴더>]   저장된 결과 요약
 //   review-tool init    <분석할 폴더> [--name 이름] [--force]   폴더를 보고 targets/<이름>.json 을 만든다
+//   review-tool mcp     [--targets <폴더>] [--data <폴더>]      MCP 서버(stdio). Claude Code·Codex 에서 분석 결과 조회
 return await CliMain.RunAsync(args);
 
 internal static class CliMain
@@ -14,6 +15,10 @@ internal static class CliMain
         if (args.Length >= 2 && args[0] == "init")
         {
             return Init(args);
+        }
+        if (args.Length >= 1 && args[0] == "mcp")
+        {
+            return await RunMcpAsync(args);
         }
         if (args.Length < 2 || args[0] is not ("analyze" or "show" or "probe"))
         {
@@ -65,6 +70,21 @@ internal static class CliMain
         TraceStore.Save(graph, paths.TraceFile);
         PrintSummary(graph);
         Console.WriteLine($"저장: {paths.TraceFile}");
+        return 0;
+    }
+
+    // MCP 서버(stdio). 표준 출력은 프로토콜 전용이라 안내·오류는 표준 오류로만 쓴다.
+    private static async Task<int> RunMcpAsync(string[] args)
+    {
+        var repo = FindRepoRoot();
+        var targets = Option(args, "--targets") ?? Path.Combine(repo, "targets");
+        var data = Option(args, "--data") ?? Path.Combine(repo, "data");
+        var utf8 = new System.Text.UTF8Encoding(false);
+        using var input = new StreamReader(Console.OpenStandardInput(), utf8);
+        await using var output = new StreamWriter(Console.OpenStandardOutput(), utf8) { AutoFlush = false };
+        Console.Error.WriteLine($"[review-tool mcp] 대상 {targets} · 결과 {data}");
+        var server = new ReviewTool.Cli.Mcp.McpServer(new ReviewTool.Cli.Mcp.McpTools(targets, data), input, output, Console.Error);
+        await server.RunAsync(CancellationToken.None);
         return 0;
     }
 

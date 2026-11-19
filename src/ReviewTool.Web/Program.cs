@@ -14,6 +14,7 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 builder.Services.AddSingleton<TraceWorkspace>();
 builder.Services.AddSingleton<EditorLauncher>();
+builder.Services.AddSingleton<AiAssistant>();
 
 var app = builder.Build();
 

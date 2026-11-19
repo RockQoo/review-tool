@@ -21,6 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\ReviewTool.Core\ReviewTool.Core.csproj" />
     <ProjectReference Include="..\..\src\ReviewTool.Cpp\ReviewTool.Cpp.csproj" />
+    <ProjectReference Include="..\..\src\ReviewTool.Cli\ReviewTool.Cli.csproj" />
   </ItemGroup>
 
   <ItemGroup>

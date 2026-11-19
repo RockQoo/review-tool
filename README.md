@@ -43,6 +43,9 @@ AI 코드 리뷰(지적 목록)나 테스트를 대신하지 않는다. 그 지�
 | 변경 영향 | 이 함수를 바꾸면 영향받는 패킷과 경로 |
 | 전후 비교 | AI 가 고치기 전(기준)과 후의 진입점·함수·호출 변화 |
 | 추정 연결 | 디스패처 → 등록 핸들러, 가상 함수 → 구현 후보 ("추정"으로 따로 표시) |
+| 문맥 복사 | 코드 스택의 흐름(경로·코드·호출 근거 파일:줄·추정 연결·못 본 것)을 Markdown 으로 복사. 코드 없이 구조만도 가능 |
+| AI 에게 질문 | 같은 문맥으로 Claude Code / Codex 를 헤드리스 실행해 답을 화면에 흘려 보여 줌. 자주 묻는 질문(실패 처리, 스레드, 입력 검증, 설명) 버튼 |
+| MCP 도구 | Claude Code·Codex 가 분석 결과를 직접 조회(`review-tool mcp`). 아래 "AI 연동" |
 
 ## 리뷰 순서 예
 
@@ -50,6 +53,35 @@ AI 코드 리뷰(지적 목록)나 테스트를 대신하지 않는다. 그 지�
 2. AI 가 고친 뒤 배지가 **바뀜**으로 바뀌면 **재분석**
 3. **비교**에서 바뀐 함수 확인 → 함수를 누르면 **영향받는 패킷** → 경로를 코드 스택으로 읽기
 4. 이상한 곳은 **열기**로 편집기에서 고친다
+
+## AI 연동
+
+**화면에서 질문**: 코드 스택 위 **AI 에게 질문** → AI 고르기 → 질문 → **보내기**. `claude` 또는 `codex` CLI 가 PATH 에 있으면 나온다.
+보내기를 누를 때만 실행되고, 보내는 것은 그 흐름의 문맥과 질문뿐이다. AI 는 대상 폴더를 작업 폴더로 받아 **읽기만** 한다
+(Claude: Read·Grep·Glob 도구만, 사용자 MCP 서버 없음 / Codex: read-only 샌드박스).
+
+**MCP 로 연결**: 먼저 `dotnet build ReviewTool.slnx` 한 번. 그다음 쓰는 도구에 등록한다(경로는 내 PC 의 저장소 위치).
+
+```powershell
+claude mcp add review-tool -- dotnet <저장소>\src\ReviewTool.Cli\bin\Debug\net10.0\ReviewTool.Cli.dll mcp
+codex mcp add review-tool -- dotnet <저장소>\src\ReviewTool.Cli\bin\Debug\net10.0\ReviewTool.Cli.dll mcp
+```
+
+| 도구 | 하는 일 |
+|---|---|
+| `list_targets` | 대상 목록, 분석 시각·규모, 신선도, 비교 기준 |
+| `get_entrypoints` | 진입점(패킷 핸들러)과 함수 id |
+| `find_functions` | 이름으로 함수 id 찾기 |
+| `get_flow` | 호출 트리 (추정 연결·멈춘 이유 표시) |
+| `get_source` | 함수 코드(줄 번호, 줄마다 부르는 함수)와 부르는 곳 |
+| `get_flow_context` | 진입점 → 함수 경로 전체를 Markdown 으로 (화면의 문맥 복사와 같음) |
+| `get_impact` | 바꾸면 영향받는 진입점과 경로 |
+| `compare` | 기준(수정 전)과 지금 분석의 구조 차이 |
+
+MCP 서버는 저장된 분석 결과(`data/`)를 읽기만 한다. 분석을 돌리거나 파일을 쓰지 않는다.
+
+> 회사 코드: 화면 질문과 MCP 모두 **코드가 AI 서비스로 전송된다**. 회사 PC 에서는 회사의 AI 사용 규정을 먼저 확인한다.
+> 전송 없이 쓰려면 문맥 복사의 "코드 포함"을 끄면 구조(이름·파일:줄)만 복사된다.
 
 ## 구조
 
@@ -68,7 +100,7 @@ AI 코드 리뷰(지적 목록)나 테스트를 대신하지 않는다. 그 지�
 | `ReviewTool.Core` | 언어와 무관한 결과 형식(`TraceGraph`), 대상 설정(`TargetConfig`), 저장 |
 | `ReviewTool.Cpp` | C++ 어댑터. vcxproj → compile_commands.json, clangd 호출 계층으로 트리 생성 |
 | `ReviewTool.Web` | 화면. 진입점 목록 · 호출 트리 · 코드 스택 |
-| `ReviewTool.Cli` | 화면 없이 분석(`analyze`), 요약(`show`), clangd 응답 확인(`probe`) |
+| `ReviewTool.Cli` | 화면 없이 분석(`analyze`), 요약(`show`), clangd 응답 확인(`probe`), MCP 서버(`mcp`) |
 
 ## 실행
 

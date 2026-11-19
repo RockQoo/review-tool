@@ -1,0 +1,237 @@
+@using ReviewTool.Core
+@using ReviewTool.Web.Services
+@implements IAsyncDisposable
+@inject AiAssistant Ai
+@inject IJSRuntime JS
+
+@* 코드 스택 위 도구: 지금 흐름을 Markdown 으로 복사 / 같은 문맥으로 AI 에게 질문 *@
+<div class="flow-tools">
+    <button class="link icon-btn" title="진입점 → 이 함수까지의 경로·코드·호출 근거·못 본 것을 Markdown 으로 복사" @onclick="Copy">
+        <span class="ico" style="--icon: url('lib/lucide/clipboard-copy.svg')"></span> 문맥 복사
+    </button>
+    <label class="check" title="끄면 함수 이름·파일:줄 같은 구조만 복사">
+        <input type="checkbox" @bind="includeCode" /> 코드 포함
+    </label>
+    <button class="link icon-btn @(asking ? "on" : "")" title="이 흐름을 문맥으로 AI 에게 질문" @onclick="ToggleAsk">
+        <span class="ico" style="--icon: url('lib/lucide/message-square-text.svg')"></span> AI 에게 질문
+    </button>
+    @if (copied is not null)
+    {
+        <span class="flow-note">@copied</span>
+    }
+</div>
+
+@if (asking)
+{
+    <article class="ask">
+        @if (Ai.Available.Count == 0)
+        {
+            <div class="note warn">Claude Code(claude) 나 Codex(codex) CLI 를 찾지 못했습니다. 설치 후 PATH 에 있어야 합니다. "문맥 복사"는 그대로 쓸 수 있습니다.</div>
+        }
+        else
+        {
+            <div class="ask-row">
+                <select value="@providerId" @onchange="OnProviderChanged" disabled="@running">
+                    @foreach (var p in Ai.Available)
+                    {
+                        <option value="@p.Id">@p.Name</option>
+                    }
+                </select>
+                @foreach (var (label, text) in Presets)
+                {
+                    var t = text;
+                    <button class="link preset" disabled="@running" @onclick="() => question = t">@label</button>
+                }
+            </div>
+            <textarea class="ask-input" rows="3" @bind="question" @bind:event="oninput" disabled="@running"
+                      placeholder="예: 이 흐름에서 실패하면 재화가 이미 빠져 있는 경우가 있나?" @onkeydown="OnKey"></textarea>
+            <div class="ask-row">
+                @if (running)
+                {
+                    <button @onclick="Cancel">중단</button>
+                    <span class="flow-note">답을 받는 중…</span>
+                }
+                else
+                {
+                    <button class="primary" @onclick="Send" disabled="@(string.IsNullOrWhiteSpace(question) || Path.Count == 0)">보내기</button>
+                    <span class="flow-note">보내기를 누르면 이 흐름(함수 @(Path.Count)개@(includeCode ? "의 코드" : "의 구조"))과 질문이 @ProviderName 로 전송됩니다. AI 는 대상 폴더를 읽기만 합니다. (Ctrl+Enter)</span>
+                }
+            </div>
+        }
+        @if (askedQuestion is not null)
+        {
+            <div class="answer">
+                <div class="asked">Q. @askedQuestion <span class="loc">(@askedFlow)</span></div>
+                @if (tools.Count > 0)
+                {
+                    <details class="tools">
+                        <summary>AI 가 읽은 것 @(tools.Count)개</summary>
+                        <ul>
+                            @foreach (var t in tools)
+                            {
+                                <li>@t</li>
+                            }
+                        </ul>
+                    </details>
+                }
+                @* MiniMarkdown 이 먼저 전부 이스케이프한다: 답 안의 HTML 은 글자로만 보인다 *@
+                <div class="answer-text">@((MarkupString)MiniMarkdown.ToHtml(answer))</div>
+                @if (error is not null)
+                {
+                    <div class="note warn">@error</div>
+                }
+                @if (!running && answer.Length > 0)
+                {
+                    <button class="link icon-btn" @onclick="CopyAnswer">
+                        <span class="ico" style="--icon: url('lib/lucide/clipboard-copy.svg')"></span> 답 복사
+                    </button>
+                }
+            </div>
+        }
+    </article>
+}
+
+@code {
+    [Parameter, EditorRequired] public TraceGraph Graph { get; set; } = default!;
+    [Parameter, EditorRequired] public IReadOnlyList<string> Path { get; set; } = [];
+    [Parameter] public IReadOnlyCollection<string>? ChangedFiles { get; set; }
+
+    private static readonly (string Label, string Text)[] Presets =
+    [
+        ("실패 처리", "이 흐름에서 중간에 실패하면(검증 실패, 예외, 전송 실패) 상태가 어중간하게 남는 곳이 있나? 있으면 어디이고 왜인지."),
+        ("스레드", "이 흐름에서 다른 스레드와 같이 건드릴 수 있는 상태가 있나? 락이나 같은 스레드 보장 없이 접근하는 곳을 짚어 줘."),
+        ("입력 검증", "클라이언트가 보낸 값 중 검증 없이 쓰이는 것이 있나? 범위·크기·권한 확인이 빠진 곳."),
+        ("설명", "이 흐름이 무엇을 하는지 단계별로 설명해 줘. 각 단계의 근거 줄도."),
+    ];
+
+    private IJSObjectReference? module;
+    private bool includeCode = true;
+    private bool asking;
+    private string? copied;
+    private string providerId = "";
+    private string question = "";
+    private string? askedQuestion;
+    private string askedFlow = "";
+    private string answer = "";
+    private string? error;
+    private readonly List<string> tools = [];
+    private bool running;
+    private CancellationTokenSource? cts;
+
+    private string ProviderName => Ai.Available.FirstOrDefault(p => p.Id == providerId)?.Name ?? "AI";
+
+    private string Context() => FlowContext.ToMarkdown(Graph, Path,
+        new FlowContext.Options { IncludeCode = includeCode, ChangedFiles = ChangedFiles });
+
+    private async Task<IJSObjectReference> Module() =>
+        module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/graph.js");
+
+    private async Task Copy()
+    {
+        var ok = await (await Module()).InvokeAsync<bool>("copyText", Context());
+        copied = ok ? $"복사했습니다 (함수 {Path.Count}개)" : "복사하지 못했습니다(브라우저가 클립보드를 막음)";
+    }
+
+    private async Task CopyAnswer()
+    {
+        var ok = await (await Module()).InvokeAsync<bool>("copyText", answer);
+        copied = ok ? "답을 복사했습니다" : "복사하지 못했습니다";
+    }
+
+    private async Task ToggleAsk()
+    {
+        asking = !asking;
+        if (asking && providerId.Length == 0)
+        {
+            var saved = await (await Module()).InvokeAsync<string?>("getPref", "ai");
+            providerId = Ai.Available.Any(p => p.Id == saved) ? saved! : Ai.Available.FirstOrDefault()?.Id ?? "";
+        }
+    }
+
+    private async Task OnProviderChanged(ChangeEventArgs e)
+    {
+        providerId = e.Value?.ToString() ?? "";
+        await (await Module()).InvokeVoidAsync("setPref", "ai", providerId);
+    }
+
+    private async Task OnKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && e.CtrlKey && !running && !string.IsNullOrWhiteSpace(question))
+        {
+            await Send();
+        }
+    }
+
+    private void Cancel() => cts?.Cancel();
+
+    private async Task Send()
+    {
+        if (running || Path.Count == 0)
+        {
+            return;
+        }
+        running = true;
+        askedQuestion = question.Trim();
+        askedFlow = string.Join(" → ", Path.Where(Graph.Nodes.ContainsKey).Select(id => TraceQueries.ShortName(Graph.Nodes[id].Name)));
+        answer = "";
+        error = null;
+        tools.Clear();
+        cts?.Dispose();
+        cts = new CancellationTokenSource();
+        var prompt = FlowContext.Prompt(Context(), askedQuestion);
+        var lastRender = DateTime.MinValue;
+        var afterTool = false;
+        try
+        {
+            await foreach (var ev in Ai.AskAsync(providerId, prompt, Graph.RootDirectory, cts.Token))
+            {
+                switch (ev.Kind)
+                {
+                    case AiEventKind.Text:
+                        // 도구를 쓰고 난 뒤의 글은 새 문단(안 그러면 "보겠습니다.세 파일"처럼 붙는다)
+                        if (afterTool && answer.Length > 0 && !answer.EndsWith('\n'))
+                        {
+                            answer += "\n\n";
+                        }
+                        afterTool = false;
+                        answer += ev.Text;
+                        break;
+                    case AiEventKind.Tool:
+                        tools.Add(ev.Text);
+                        afterTool = true;
+                        break;
+                    case AiEventKind.Error:
+                        error = ev.Text;
+                        break;
+                }
+                // 조각마다 다시 그리면 무거우니 0.1초에 한 번
+                if (DateTime.UtcNow - lastRender > TimeSpan.FromMilliseconds(100))
+                {
+                    lastRender = DateTime.UtcNow;
+                    StateHasChanged();
+                    await Task.Yield();
+                }
+            }
+        }
+        finally
+        {
+            running = false;
+            answer = answer.Trim();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        cts?.Cancel();
+        if (module is not null)
+        {
+            try
+            {
+                await module.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+    }
+}

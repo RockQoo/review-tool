@@ -314,6 +314,10 @@
                         </details>
                     </article>
                 }
+                @if (stack.Count > 0)
+                {
+                    <FlowTools Graph="graph" Path="stack" ChangedFiles="ChangedFiles" />
+                }
                 @if (stack.Count == 0)
                 {
                     <p class="hint">트리에서 함수를 누르면 진입점부터 그 함수까지의 코드가 위에서 아래로 이어 붙습니다.</p>
@@ -478,6 +482,8 @@
     }
 
     private bool FileChanged(string relativeFile) => freshness?.IsChanged(relativeFile) == true;
+
+    private IReadOnlyCollection<string>? ChangedFiles => freshness is null ? null : [.. freshness.Changed, .. freshness.Removed];
 
     public async ValueTask DisposeAsync()
     {
@@ -1181,23 +1187,10 @@
 
     // ---- 표시 ----
 
-    private static string ShortName(string name)
-    {
-        // Pipeline::MessageProducer::PushMsg -> MessageProducer::PushMsg
-        var parts = name.Split("::");
-        return parts.Length <= 2 ? name : string.Join("::", parts[^2..]);
-    }
+    private static string ShortName(string name) => TraceQueries.ShortName(name);
 
     private static string KindClass(TraceNode n) => n.Kind == NodeKind.External ? "external"
         : n.Stop == StopReason.Hidden ? "hidden" : "";
 
-    private static string StopText(StopReason r) => r switch
-    {
-        StopReason.Hidden => "설정(hideCallees)으로 숨긴 함수라 안쪽 호출은 따라가지 않았습니다.",
-        StopReason.DepthLimit => "깊이 제한에 걸려 안쪽 호출은 따라가지 않았습니다.",
-        StopReason.NodeLimit => "전체 함수 수 제한에 걸려 안쪽 호출은 따라가지 않았습니다.",
-        StopReason.NoDefinition => "정의(본문)를 찾지 못했습니다. 가상 함수·인터페이스라면 실제 구현은 따로 찾아야 합니다.",
-        StopReason.Failed => "clangd 조회가 실패했습니다.",
-        _ => "",
-    };
+    private static string StopText(StopReason r) => TraceQueries.StopText(r);
 }

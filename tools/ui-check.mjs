@@ -65,6 +65,8 @@ const click = async (selector, text) => {
 
 await send('Runtime.enable');
 await send('Page.enable');
+await send('Emulation.setFocusEmulationEnabled', { enabled: true });   // 헤드리스는 포커스가 없어 클립보드가 막힌다
+await send('Browser.grantPermissions', { origin: new URL(url).origin, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });
 await send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 1000, deviceScaleFactor: 1, mobile: false });
 await send('Page.navigate', { url });
 // 대화형 연결(SignalR)이 붙을 때까지
@@ -114,6 +116,30 @@ await waitFor(`!!document.querySelector('.compare')`);
 console.log('compare', await evaluate(`document.querySelector('.compare').textContent.replace(/\\s+/g, ' ').trim().slice(0, 160)`));
 await shot('4c-compare');
 await click('.compare button', '닫기');
+
+// 문맥 복사 · AI 에게 질문 (실제 전송은 UI_ASK=1 일 때만: 비용이 들고 답이 매번 다르다)
+await click('.flow-tools button', '문맥 복사');
+await waitFor(`!!document.querySelector('.flow-tools .flow-note')`);
+console.log('copy', await evaluate(`document.querySelector('.flow-tools .flow-note').textContent.trim()`));
+console.log('clipboard', await evaluate(`navigator.clipboard.readText().then(t => t.split('\\n').slice(0, 6).join(' / ')).catch(e => 'read 실패 ' + e)`));
+await click('.flow-tools button', 'AI 에게 질문');
+await waitFor(`!!document.querySelector('.ask')`);
+console.log('ask', await evaluate(`[...document.querySelectorAll('.ask select option')].map(o => o.textContent).join(',') || document.querySelector('.ask .note')?.textContent`));
+await click('.ask .preset', '설명');
+await sleep(300);
+await shot('4d-ask');
+if (process.env.UI_ASK === '1') {
+  if (process.env.UI_ASK_AI) {   // claude | codex
+    await evaluate(`(() => { const s = document.querySelector('.ask select'); s.value = ${JSON.stringify(process.env.UI_ASK_AI)}; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await sleep(300);
+  }
+  await click('.ask button.primary', '보내기');
+  await waitFor(`!!document.querySelector('.ask button.primary') && !!document.querySelector('.answer-text')?.textContent.trim()`, 300000);
+  console.log('answer', await evaluate(`document.querySelector('.answer-text').textContent.trim().slice(0, 300)`));
+  console.log('answer error', await evaluate(`document.querySelector('.answer .note')?.textContent ?? null`));
+  await shot('4e-answer');
+}
+await click('.flow-tools button', 'AI 에게 질문');
 
 // 노드 보기: 아이콘으로 전환 → 그래프의 Fanout 노드를 누르면 코드 스택이 진입점→Fanout 으로 바뀐다
 await evaluate(`document.querySelector('.views button[title="노드 보기"]').click()`);

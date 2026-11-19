@@ -293,21 +293,3 @@ public sealed class TraceWorkspace(IConfiguration configuration, IWebHostEnviron
 }
 
 public sealed record FolderEntry(string Name, string FullPath, bool IsProject);
-
-// 화면에서 자주 쓰는 조회를 미리 만들어 둔다.
-public sealed class TraceIndex
-{
-    private static readonly List<TraceEdge> None = [];
-    private readonly Dictionary<string, List<TraceEdge>> children_;
-
-    public TraceIndex(TraceGraph graph)
-    {
-        // 엣지는 분석기가 호출자 본문의 소스 순서대로 넣었다
-        children_ = graph.Edges.GroupBy(e => e.From).ToDictionary(g => g.Key, g => g.ToList());
-        Callers = graph.Edges.GroupBy(e => e.To).ToDictionary(g => g.Key, g => g.Select(e => e.From).Distinct().ToList());
-    }
-
-    public Dictionary<string, List<string>> Callers { get; }
-
-    public List<TraceEdge> ChildrenOf(string id) => children_.GetValueOrDefault(id) ?? None;
-}

@@ -102,3 +102,22 @@ export function getPref(key) {
 export function setPref(key, value) {
     try { localStorage.setItem('review-tool:' + key, value); } catch { }
 }
+
+// 문맥 복사. 클립보드 API 가 막히면(권한·포커스) 숨긴 textarea 로 한 번 더 시도한다.
+export async function copyText(text) {
+    try {
+        await navigator.clipboard.writeText(text);
+        return true;
+    } catch {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch { }
+        ta.remove();
+        return ok;
+    }
+}

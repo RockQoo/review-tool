@@ -15,6 +15,11 @@ C++(나중에 C#) 서버 코드의 호출 흐름을 보여 주는 개인 리뷰 
 - 언어 어댑터는 `ITraceAnalyzer` 를 구현하고 `TraceGraph` 만 채운다. 화면은 언어를 모른다.
 - "못 본 것"은 `TraceGraph.Diagnostics` / `TraceNode.Stop` 으로 남긴다. 빈 호출 목록을 "호출 없음"으로 보이게 하지 않는다.
 - 주석과 문서는 한국어.
+- AI 연동(2단계): AI CLI 는 사용자가 "보내기"를 누를 때만 실행한다. 인자는 고정값만 쓰고, 질문·코드는 표준 입력으로 넘긴다.
+  셸(cmd)을 거치지 않는다(codex 는 node 로 스크립트 직접 실행). AI 는 읽기 전용(Claude: `--tools Read,Grep,Glob`, Codex: `--sandbox read-only`).
+  AI 답은 `MiniMarkdown` 이 먼저 전부 이스케이프한 뒤 일부만 태그로 바꾼다. `MarkupString` 에 원문을 그대로 넣지 않는다.
+- MCP 서버(`review-tool mcp`)는 표준 출력에 프로토콜 메시지만 쓴다(안내·로그는 표준 오류). 저장된 결과를 읽기만 한다.
+- 화면·MCP·문맥 복사가 같은 말을 하도록 조회와 문구는 Core(`TraceQueries`, `FlowContext`)에 둔다.
 
 ## clangd 사용 요령 (실측, 바꾸기 전에 읽을 것)
 
@@ -37,4 +42,7 @@ dotnet test ReviewTool.slnx                                   # 단위 + clangd 
 dotnet run --project src/ReviewTool.Cli -- init <분석할 폴더>    # 설정이 없을 때
 dotnet run --project src/ReviewTool.Cli -- analyze targets/<이름>.json
 node tools/ui-check.mjs                                        # 서버가 떠 있을 때: 헤드리스 Edge 로 클릭·스크린샷(data/ui-check/)
+$env:UI_ASK=1; $env:UI_ASK_AI="codex"; node tools/ui-check.mjs # AI 질문까지 실제 전송(비용 듦, 답은 매번 다름)
 ```
+
+`dotnet test` 는 Web 도 빌드하지만, 서버가 떠 있으면 DLL 이 잠겨 Web 빌드만 조용히 실패하고 옛 DLL 로 뜰 수 있다. 화면을 확인하기 전에 서버를 끄고 `dotnet build` 로 오류 0 을 본다.
