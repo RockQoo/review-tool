@@ -50,6 +50,10 @@ public sealed class TraceNode
     public string Code { get; set; } = "";
     public bool CodeTruncated { get; set; }
 
+    // 전후 비교용 지문. 잘리지 않은 전체 본문 기준이며 공백·주석 차이는 무시한다.
+    public string Signature { get; set; } = "";
+    public string BodyHash { get; set; } = "";
+
     // 이 노드 아래를 왜 더 펼치지 않았는지. null 이면 끝까지 펼쳤다.
     public StopReason? Stop { get; set; }
 }

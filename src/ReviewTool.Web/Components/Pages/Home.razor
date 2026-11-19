@@ -75,6 +75,9 @@
                         })
                     </button>
                 }
+                <button class="link icon-btn" title="기준 분석(수정 전)과 지금 분석의 구조 비교" @onclick="ToggleCompare">
+                    <span class="ico" style="--icon: url('lib/lucide/git-compare.svg')"></span> 비교
+                </button>
                 @graph.AnalyzedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm") 분석 ·
                 진입점 @graph.EntryPoints.Count · 함수 @graph.Nodes.Count · 호출 @graph.Edges.Count
                 @if (graph.Diagnostics.Count > 0)
@@ -117,6 +120,60 @@
                         <li>지워짐: @f</li>
                     }
                 </ul>
+            }
+        </section>
+    }
+
+    @if (showCompare && graph is not null && target is not null)
+    {
+        <section class="diagnostics compare">
+            <div class="compare-bar">
+                <b>전후 비교</b>
+                <label>기준
+                    <select value="@baselineId" @onchange="OnBaselineChanged">
+                        @if (snapshots.Count == 0)
+                        {
+                            <option value="">(기준 없음)</option>
+                        }
+                        @foreach (var s in snapshots)
+                        {
+                            <option value="@s.Id">@s.Label</option>
+                        }
+                    </select>
+                </label>
+                → 지금 분석(@graph.AnalyzedAt.ToLocalTime().ToString("MM-dd HH:mm"))
+                <button class="link icon-btn" title="지금 결과를 비교 기준으로 보관(AI 에게 고치게 하기 전에)" @onclick="SaveBaseline">
+                    <span class="ico" style="--icon: url('lib/lucide/history.svg')"></span> 지금 결과를 기준으로 저장
+                </button>
+                <button class="link close" @onclick="() => showCompare = false">✕ 닫기</button>
+            </div>
+            @if (snapshots.Count == 0)
+            {
+                <p>비교할 기준이 없습니다. 고치기 전에 <b>지금 결과를 기준으로 저장</b>을 누르거나, 한 번 더 재분석하면 직전 분석이 자동으로 기준이 됩니다.</p>
+            }
+            else if (comparison is not null)
+            {
+                @foreach (var w in comparison.ConditionWarnings)
+                {
+                    <p class="warn-line">⚠ @w</p>
+                }
+                @if (!comparison.HasChanges)
+                {
+                    <p>구조 차이가 없습니다.</p>
+                }
+                <div class="compare-grid">
+                    @CompareList("진입점 추가", comparison.EntriesAdded.Select(e => (e, (string?)null)))
+                    @CompareList("진입점 삭제", comparison.EntriesRemoved.Select(e => (e, (string?)null)))
+                    @CompareList("본문 변경", comparison.BodyChanged.Select(f => ($"{f.Name}  {f.File}:{f.Line}", f.NodeId)))
+                    @CompareList("시그니처 변경", comparison.SignatureChanged.Select(p => ($"{p.After.Name}  {p.After.File}:{p.After.Line}", p.After.NodeId)))
+                    @CompareList("함수 추가", comparison.FunctionsAdded.Select(f => ($"{f.Name}  {f.File}:{f.Line}", f.NodeId)))
+                    @CompareList("함수 삭제", comparison.FunctionsRemoved.Select(f => ($"{f.Name}  {f.File}:{f.Line}", (string?)null)))
+                    @CompareList("이름 변경 후보", comparison.RenameCandidates.Select(p => ($"{p.Before.Name} → {p.After.Name}", p.After.NodeId)))
+                    @CompareList("호출 추가", comparison.CallsAdded.Select(c => ($"{c.From} → {c.To}", (string?)null)))
+                    @CompareList("호출 삭제", comparison.CallsRemoved.Select(c => ($"{c.From} → {c.To}", (string?)null)))
+                </div>
+                <p class="hint-line">함수 이름을 누르면 그 함수를 바꿔서 영향받는 진입점을 보여 줍니다. ·
+                    @string.Join(" · ", SnapshotComparer.Limits)</p>
             }
         </section>
     }
@@ -694,6 +751,10 @@
             expanded.Clear();
         }
         RefreshFreshness();
+        if (showCompare)
+        {
+            RefreshCompare(keepSelection: true);
+        }
     }
 
     private void OnTargetChanged(ChangeEventArgs e)
@@ -729,6 +790,88 @@
     }
 
     private string? notice;
+
+    // ---- 전후 비교 ----
+
+    private bool showCompare;
+    private IReadOnlyList<SnapshotStore.Snapshot> snapshots = [];
+    private string baselineId = "";
+    private SnapshotComparer.CompareResult? comparison;
+
+    private void ToggleCompare()
+    {
+        showCompare = !showCompare;
+        if (showCompare)
+        {
+            RefreshCompare(keepSelection: true);
+        }
+    }
+
+    private void RefreshCompare(bool keepSelection)
+    {
+        if (target is null)
+        {
+            return;
+        }
+        snapshots = Workspace.ListSnapshots(target);
+        if (!keepSelection || snapshots.All(s => s.Id != baselineId))
+        {
+            baselineId = snapshots.FirstOrDefault()?.Id ?? "";
+        }
+        comparison = baselineId.Length > 0 ? Workspace.Compare(target, baselineId) : null;
+    }
+
+    private void OnBaselineChanged(ChangeEventArgs e)
+    {
+        baselineId = e.Value?.ToString() ?? "";
+        RefreshCompare(keepSelection: true);
+    }
+
+    private void SaveBaseline()
+    {
+        if (target is null)
+        {
+            return;
+        }
+        var saved = Workspace.SaveBaseline(target);
+        RefreshCompare(keepSelection: false);
+        if (saved is not null)
+        {
+            baselineId = saved.Id;
+            RefreshCompare(keepSelection: true);
+            notice = $"기준으로 저장했습니다: {saved.Label}. 코드를 고친 뒤 재분석하고 비교하세요.";
+        }
+    }
+
+    private RenderFragment CompareList(string title, IEnumerable<(string Text, string? NodeId)> items) => __builder =>
+    {
+        var list = items.ToList();
+        if (list.Count == 0)
+        {
+            return;
+        }
+        <div class="compare-col">
+            <div class="compare-title">@title <span class="count">@list.Count</span></div>
+            <ul>
+                @foreach (var (text, nodeId) in list.Take(100))
+                {
+                    @if (nodeId is not null && graph!.Nodes.ContainsKey(nodeId))
+                    {
+                        var id = nodeId;
+                        <li><button class="link mono" @onclick="() => ShowImpact(id)">@text</button></li>
+                    }
+                    else
+                    {
+                        <li class="mono">@text</li>
+                    }
+                }
+                @if (list.Count > 100)
+                {
+                    <li>… 외 @(list.Count - 100)개</li>
+                }
+            </ul>
+        </div>
+    };
 
     // ---- 변경 영향 ----
 

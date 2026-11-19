@@ -145,6 +145,21 @@ public sealed class TraceWorkspace(IConfiguration configuration, IWebHostEnviron
         _ => throw new NotSupportedException($"지원하지 않는 언어: {language}"),
     };
 
+    // ---- 전후 비교 ----
+
+    public IReadOnlyList<SnapshotStore.Snapshot> ListSnapshots(string name) =>
+        SnapshotStore.List(new WorkPaths(DataDirectory, name));
+
+    public SnapshotStore.Snapshot? SaveBaseline(string name) =>
+        Get(name) is { } loaded ? SnapshotStore.SaveBaseline(new WorkPaths(DataDirectory, name), loaded.Graph) : null;
+
+    public SnapshotComparer.CompareResult? Compare(string name, string snapshotId)
+    {
+        var current = Get(name);
+        var baseline = SnapshotStore.Load(new WorkPaths(DataDirectory, name), snapshotId);
+        return current is null || baseline is null ? null : SnapshotComparer.Compare(baseline, current.Value.Graph);
+    }
+
     // 분석 결과가 지금 코드와 같은지. 파일 목록·크기·시각 비교(다르면 해시)라 분석은 돌리지 않는다.
     public FreshnessReport CheckFreshness(string name)
     {
@@ -192,6 +207,7 @@ public sealed class TraceWorkspace(IConfiguration configuration, IWebHostEnviron
                     Changed?.Invoke();
                 });
                 var graph = await analyzer.AnalyzeAsync(config, paths, progress, token);
+                SnapshotStore.KeepPrevious(paths);   // 전후 비교의 "직전 분석"
                 TraceStore.Save(graph, paths.TraceFile);
                 lock (lock_)
                 {

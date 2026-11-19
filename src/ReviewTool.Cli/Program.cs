@@ -61,6 +61,7 @@ internal static class CliMain
             _ => throw new NotSupportedException($"지원하지 않는 언어: {config.Language}"),
         };
         var graph = await analyzer.AnalyzeAsync(config, paths, progress, cts.Token);
+        SnapshotStore.KeepPrevious(paths);
         TraceStore.Save(graph, paths.TraceFile);
         PrintSummary(graph);
         Console.WriteLine($"저장: {paths.TraceFile}");

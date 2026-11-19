@@ -143,6 +143,17 @@ select, input.search {
 .graph-legend { font-size: 11px; color: var(--muted); padding: 4px 8px; border-top: 1px solid var(--border); }
 .tree-tools select { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; }
 
+.compare { background: var(--panel); max-height: 45vh; }
+.compare-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+.compare-bar .close { margin-left: auto; }
+.compare-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 8px; }
+.compare-col { border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; background: var(--bg); }
+.compare-title { font-weight: 600; font-size: 12px; }
+.compare-title .count { color: var(--accent); margin-left: 4px; }
+.compare ul { margin: 2px 0; padding-left: 16px; font-size: 12px; }
+.compare .mono { font-family: var(--mono); font-variant-ligatures: none; text-align: left; }
+.compare .hint-line, .compare .warn-line { font-size: 12px; margin: 6px 0 0; color: var(--muted); }
+.compare .warn-line { color: var(--warn); }
 .impact { border: 1px solid var(--accent); border-radius: 6px; margin-bottom: 14px; overflow: hidden; }
 .impact .frame-head { align-items: center; }
 .impact-list { list-style: none; margin: 0; padding: 6px 10px; max-height: 40vh; overflow: auto; }

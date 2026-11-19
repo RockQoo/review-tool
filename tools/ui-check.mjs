@@ -108,6 +108,13 @@ console.log('frames after impact', await evaluate(`[...document.querySelectorAll
 await evaluate(`[...document.querySelectorAll('.impact button')].find(b => b.textContent.includes('닫기')).click()`);
 await sleep(300);
 
+// 전후 비교 패널
+await click('.meta button', '비교');
+await waitFor(`!!document.querySelector('.compare')`);
+console.log('compare', await evaluate(`document.querySelector('.compare').textContent.replace(/\\s+/g, ' ').trim().slice(0, 160)`));
+await shot('4c-compare');
+await click('.compare button', '닫기');
+
 // 노드 보기: 아이콘으로 전환 → 그래프의 Fanout 노드를 누르면 코드 스택이 진입점→Fanout 으로 바뀐다
 await evaluate(`document.querySelector('.views button[title="노드 보기"]').click()`);
 await waitFor(`!!document.getElementById('graph-canvas')?._cy`);

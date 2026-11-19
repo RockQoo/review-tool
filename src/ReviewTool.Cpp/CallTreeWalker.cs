@@ -294,6 +294,9 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
             var take = Math.Min(count, config.MaxCodeLines);
             node.Code = string.Join('\n', lines.Skip(body.StartLine - 1).Take(take));
             node.CodeTruncated = take < count;
+            var full = node.CodeTruncated ? string.Join('\n', lines.Skip(body.StartLine - 1).Take(count)) : node.Code;
+            node.Signature = CodeFingerprint.Signature(full);
+            node.BodyHash = CodeFingerprint.Body(full);
             if (!body.HasBody)
             {
                 node.Stop = StopReason.NoDefinition;
@@ -314,7 +317,7 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
     }
 
     // 이름으로 색인을 찾으면 같은 이름의 오버로드·다른 클래스가 섞여 나온다. 범위가 맞는 후보가 하나면 그것을,
-    // 여럿이면 각 후보 위치에서 심볼 ID 를 받아 원래 함수(symbol)와 같은 것만 쓴다. 못 가르면 쓰지 않는다.
+    // 여럿이면 선언과 매개변수 타입이 같은 후보 하나만 쓴다. 못 가르면 쓰지 않는다(진단에 남김).
     private async Task<(string Path, int Line0, int Col)?> FindDefinitionAsync(string name, string qualified,
                                                                               (string Path, int Line0, int Col) declaration,
                                                                               CancellationToken ct)
