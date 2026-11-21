@@ -15,3 +15,11 @@ review.md
 PERF-LOG.md
 # 데스크톱 exe 게시 결과(tools/publish-desktop.ps1)
 dist/
+
+# 따로 전달하는 문서(커밋 안 함)
+share/
+
+# 사용법 스크린샷(대상 소스가 보임)과 검토 중인 계획서는 로컬 전용
+docs/usage/index.html
+docs/usage/img/
+docs/plans/

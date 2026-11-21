@@ -16,6 +16,14 @@ function styles() {
             }
         },
         { selector: 'node.entry', style: { 'border-color': css('--accent'), 'border-width': 2, 'font-weight': 'bold' } },
+        // 같은 줄 묶음(한 문장에서 이어 부른 호출). 크기는 안의 노드로 정해진다.
+        {
+            selector: 'node.line-group', style: {
+                'text-valign': 'top', 'text-halign': 'center', 'font-size': 10, 'color': css('--muted'),
+                'background-color': css('--accent-soft'), 'background-opacity': 0.35,
+                'border-style': 'dashed', 'border-color': css('--muted'), 'padding': '6px',
+            }
+        },
         { selector: 'node.external', style: { 'color': css('--ext'), 'border-style': 'dashed' } },
         { selector: 'node.hidden', style: { 'color': css('--ext'), 'font-style': 'italic' } },
         { selector: 'node.more', style: { 'border-color': css('--warn'), 'border-style': 'dotted' } },
@@ -72,7 +80,12 @@ export function highlight(id, path, center = true) {
     for (let i = 0; i < ids.length; i++) {
         const node = cy.getElementById(ids[i]);
         node.addClass(i === ids.length - 1 ? 'current' : 'onpath');
-        if (i > 0) cy.getElementById(`${ids[i - 1]}->${ids[i]}`).addClass('onpath');
+        if (i > 0) {
+            let edge = cy.getElementById(`${ids[i - 1]}->${ids[i]}`);
+            // 같은 줄 묶음 안의 노드면 선은 묶음 상자로 가 있다
+            if (edge.empty() && node.parent().nonempty()) edge = cy.getElementById(`${ids[i - 1]}->${node.parent().id()}`);
+            edge.addClass('onpath');
+        }
     }
     const last = ids.length ? cy.getElementById(ids[ids.length - 1]) : null;
     if (center && last && last.nonempty()) {
@@ -152,6 +165,67 @@ export function renderMap(id, elements, dotnet) {
     const media = matchMedia('(prefers-color-scheme: dark)');
     media.addEventListener('change', onTheme);
     graphs.set(id, { cy, media, onTheme });
+}
+
+// 칸 경계선(.splitter) 끌기. 크기는 .panes 의 CSS 변수(data-var)로 넣고 브라우저에 기억한다. 두 번 누르면 기본 크기.
+// 경계선은 Blazor 가 그리고, 여기서는 문서 전체에 이벤트를 한 번만 건다(칸이 다시 그려져도 그대로 동작).
+const SPLIT_VARS = ['--w-entries', '--w-tree', '--w-graph', '--h-top'];
+let splitListening = false;
+
+function resizeGraphs() {
+    for (const g of graphs.values()) g.cy.resize();
+}
+
+export function initSplitters() {
+    const panes = document.querySelector('.panes');
+    if (panes) {
+        for (const name of SPLIT_VARS) {
+            const v = getPref('split' + name);
+            if (v) panes.style.setProperty(name, v);
+        }
+        resizeGraphs();
+    }
+    if (splitListening) return;
+    splitListening = true;
+    document.addEventListener('pointerdown', ev => {
+        const s = ev.target.closest?.('.splitter');
+        const box = s?.closest('.panes');
+        const before = s?.previousElementSibling;
+        if (!s || !box || !before || ev.button !== 0) return;
+        ev.preventDefault();
+        const vertical = s.classList.contains('h');      // 위아래로 끄는 경계
+        const start = vertical ? ev.clientY : ev.clientX;
+        const base = vertical ? before.getBoundingClientRect().height : before.getBoundingClientRect().width;
+        const total = vertical ? box.clientHeight : box.clientWidth;
+        const name = s.dataset.var;
+        s.setPointerCapture(ev.pointerId);
+        s.classList.add('drag');
+        document.body.classList.add(vertical ? 'resizing-row' : 'resizing-col');
+        const move = e => {
+            const v = Math.max(120, Math.min(total - 200, base + (vertical ? e.clientY : e.clientX) - start));
+            box.style.setProperty(name, Math.round(v) + 'px');
+        };
+        const up = () => {
+            s.removeEventListener('pointermove', move);
+            s.removeEventListener('pointerup', up);
+            s.removeEventListener('pointercancel', up);
+            s.classList.remove('drag');
+            document.body.classList.remove('resizing-row', 'resizing-col');
+            const v = box.style.getPropertyValue(name);
+            if (v) setPref('split' + name, v);
+            resizeGraphs();
+        };
+        s.addEventListener('pointermove', move);
+        s.addEventListener('pointerup', up);
+        s.addEventListener('pointercancel', up);
+    });
+    document.addEventListener('dblclick', ev => {
+        const s = ev.target.closest?.('.splitter');
+        if (!s) return;
+        s.closest('.panes')?.style.removeProperty(s.dataset.var);
+        try { localStorage.removeItem('review-tool:split' + s.dataset.var); } catch { }
+        resizeGraphs();
+    });
 }
 
 // 보기 방식처럼 사람마다 다른 편의 설정만 저장한다. 막혀 있어도 기본값으로 동작.

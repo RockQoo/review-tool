@@ -215,7 +215,7 @@
             shown++;
         }
         info = $"프로세스 {map.Processes.Count(p => classes.Any(c => c.Process == p))}개 · 클래스 {classes.Count}개 · 선 {shown}개";
-        note = Graph.Channels.Count == 0 ? "이 분석 결과에는 메시지 정보가 없어 프로세스를 넘는 패킷 선이 없습니다. 재분석하세요." : null;
+        note = Graph.Channels.Count == 0 ? "이 분석 결과에는 메시지 정보가 없어 프로세스를 넘는 패킷 선이 없습니다. 다시 분석하세요." : null;
         return elements;
     }
 
@@ -227,11 +227,12 @@
         if (Graph.Types.Count == 0)
         {
             info = "";
-            note = "이 분석 결과에는 클래스 정보가 없습니다(3단계 이전 결과). 재분석하세요.";
+            note = "이 분석 결과에는 클래스 정보가 없습니다(3단계 이전 결과). 다시 분석하세요.";
             return [];
         }
         note = null;
-        var byName = Graph.Types.ToDictionary(t => t.Name);
+        // 다른 C# 프로젝트에 같은 이름 클래스(Program 등)가 있을 수 있다. 이름이 같으면 처음 것만(보기가 멈추지 않게)
+        var byName = Graph.Types.GroupBy(t => t.Name).ToDictionary(g => g.Key, g => g.First());
         var byShort = Graph.Types.GroupBy(t => t.Name.Split("::")[^1]).ToDictionary(g => g.Key, g => g.First());
         IEnumerable<TypeInfo> chosen = Graph.Types;
         if (scope == "flow" && EntryNodeId is not null)

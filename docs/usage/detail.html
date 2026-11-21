@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>review-tool 사용법</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --text: #1d1f21; --muted: #5f6368; --line: #e2e2de;
+  --accent: #2f6fd6; --accent-bg: #eaf1fc; --warn: #a8590b; --warn-bg: #fdf3e6; --code-bg: #f1f1ee;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #17181a; --panel: #1f2124; --text: #e6e6e3; --muted: #a0a4a8; --line: #33363a;
+    --accent: #7aa7f0; --accent-bg: #1d2a40; --warn: #f0b35c; --warn-bg: #3a2b16; --code-bg: #2a2c30;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.7 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
+main { max-width: 920px; margin: 0 auto; padding: 32px 16px 80px; }
+h1 { font-size: 28px; margin: 0 0 4px; }
+h2 { font-size: 20px; margin: 44px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+h3 { font-size: 16px; margin: 24px 0 8px; }
+p.lead { color: var(--muted); margin: 0 0 20px; }
+nav.toc { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 18px; }
+nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+nav.toc a { color: var(--accent); text-decoration: none; }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin: 8px 0 16px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+th { background: var(--code-bg); font-weight: 600; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+code, pre { font-family: Consolas, "D2Coding", monospace; font-size: 13.5px; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--code-bg); padding: 12px 14px; border-radius: 8px; overflow-x: auto; line-height: 1.5; }
+.btn { display: inline-block; border: 1px solid var(--line); background: var(--panel); border-radius: 5px; padding: 0 7px; font-size: 13px; white-space: nowrap; }
+.note { background: var(--accent-bg); border-left: 4px solid var(--accent); padding: 10px 14px; border-radius: 6px; margin: 12px 0; }
+.warn { background: var(--warn-bg); border-left: 4px solid var(--warn); padding: 10px 14px; border-radius: 6px; margin: 12px 0; }
+ol.steps > li { margin-bottom: 6px; }
+.layout { display: grid; grid-template-columns: 1fr 1.4fr 1.6fr; gap: 6px; margin: 12px 0; font-size: 13px; }
+.layout div { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+.layout .top { grid-column: 1 / -1; background: var(--accent-bg); }
+.layout b { display: block; margin-bottom: 4px; }
+@media (max-width: 640px) {
+  nav.toc ol { columns: 1; }
+  .layout { grid-template-columns: 1fr; }
+  table { display: block; overflow-x: auto; }
+}
+</style>
+</head>
+<body>
+<main>
+<h1>review-tool 사용법</h1>
+<p class="lead"><a href="index.html">← 스크린샷 사용법</a><br>C++·C# 서버 코드를 <b>패킷(진입점) 단위의 흐름</b>으로 읽는 도구입니다. 진입점을 고르면 호출 트리가 나오고, 함수를 누르면 진입점부터 그 함수까지의 코드가 위에서 아래로 이어 붙습니다.</p>
+
+<nav class="toc"><ol>
+  <li><a href="#run">실행하기</a></li>
+  <li><a href="#screen">화면 구성</a></li>
+  <li><a href="#basic">기본 사용: 흐름 읽기</a></li>
+  <li><a href="#views">보기 8가지</a></li>
+  <li><a href="#review">AI가 고친 코드 리뷰하기</a></li>
+  <li><a href="#checks">점검 규칙</a></li>
+  <li><a href="#ai">문맥 복사와 AI 질문</a></li>
+  <li><a href="#report">공유 보고서</a></li>
+  <li><a href="#target">대상 추가와 설정</a></li>
+  <li><a href="#mcp">MCP로 AI에 연결</a></li>
+  <li><a href="#cli">명령줄</a></li>
+  <li><a href="#trouble">문제 해결과 한계</a></li>
+</ol></nav>
+
+<h2 id="run">1. 실행하기</h2>
+<h3>개발 PC (소스로 실행)</h3>
+<p>필요한 것: .NET 10 SDK. C++을 분석하려면 LLVM(clangd)과 Visual Studio C++ 도구도 필요합니다.</p>
+<pre>cd D:\Work\RockQ\Projects\review-tool
+.\run.ps1             # 빌드 → 서버 시작 → 브라우저로 http://127.0.0.1:5057 열기
+.\run.ps1 -Analyze -Target asio-server   # 화면 없이 분석만</pre>
+<p>끝낼 때는 실행한 창에서 <code>Ctrl+C</code>를 누릅니다.</p>
+
+<h3>설치 없이 (데스크톱 exe 하나)</h3>
+<pre>.\tools\publish-desktop.ps1     # → dist\review-tool.exe (약 61MB)</pre>
+<ul>
+  <li>.NET 런타임이 exe 안에 들어 있어 설치할 것이 없습니다. 화면은 Windows 11에 기본으로 있는 WebView2로 띄웁니다.</li>
+  <li>대상 설정과 분석 결과는 exe 옆의 <code>targets\</code>, <code>data\</code>에 생깁니다.</li>
+  <li>결과 보기와 C# 분석에는 추가로 필요한 것이 없습니다. C++ 다시 분석에는 LLVM과 VS C++ 도구가 따로 있어야 합니다.</li>
+  <li><code>review-tool.exe --self-test</code>를 실행하면 창을 띄우지 않고 화면 파일이 잘 나오는지만 확인합니다.</li>
+</ul>
+<div class="note">화면 서버는 이 PC(<code>127.0.0.1</code>)에서만 접속됩니다. 같은 네트워크의 다른 PC에서는 열리지 않습니다.</div>
+
+<h2 id="screen">2. 화면 구성</h2>
+<div class="layout">
+  <div class="top"><b>상단 바</b>대상 고르기 · <span class="btn">＋ 대상 추가</span> · <span class="btn">다시 분석</span> · 코드 열기(편집기 선택) · 보기 아이콘 8개 · 신선도 배지(<span class="btn">● 최신</span>) · <span class="btn">비교</span> · <span class="btn">보고서</span> · 분석 규모 · <span class="btn">못 본 것 N</span></div>
+  <div><b>진입점 목록</b>패킷 핸들러, <code>main</code> 등. 프로세스·클래스별로 묶여 있고 검색할 수 있습니다.</div>
+  <div><b>보기</b>호출 트리, 노드 그래프, 여정, 요약 등. 상단 아이콘으로 바꿉니다.</div>
+  <div><b>코드 스택</b>진입점부터 고른 함수까지의 코드가 위에서 아래로 쌓입니다.</div>
+</div>
+<p>노드 그래프나 흐름도처럼 그림이 큰 보기에서는 그림이 위, 코드가 아래로 배치됩니다.</p>
+<ul>
+  <li><b>칸 크기</b>: 칸 사이 경계선을 끌면 너비(위아래 배치에서는 높이)가 바뀝니다. 두 번 누르면 기본 크기로 돌아가고, 바꾼 크기는 브라우저가 기억합니다.</li>
+  <li><b>기본 화면으로</b>: 왼쪽 위 <span class="btn">review-tool</span> 글자를 누르면 대상 추가·비교·보고서 같은 열린 창이 닫힙니다. 대상 추가 화면에서는 <span class="btn">← 돌아가기</span>나 보기 아이콘으로도 돌아갑니다.</li>
+</ul>
+
+<h2 id="basic">3. 기본 사용: 흐름 읽기</h2>
+<ol class="steps">
+  <li>상단에서 <b>대상</b>(예: <code>asio-server</code>)을 고릅니다. 처음이거나 코드가 바뀌었으면 <span class="btn">다시 분석</span>을 누릅니다.</li>
+  <li>왼쪽에서 <b>진입점</b>을 누릅니다. 가운데에 호출 트리가 나옵니다.</li>
+  <li>트리에서 <b>함수</b>를 누르면 오른쪽 코드 스택에 진입점부터 그 함수까지의 경로가 쌓입니다.</li>
+  <li>코드 안의 <b>호출 줄</b>을 누르면 그 함수가 아래에 한 단계 더 붙습니다. <span class="btn">✕ 아래 닫기</span>로 그 아래를 지웁니다.</li>
+  <li>고치고 싶은 곳은 <span class="btn">열기</span>나 <b>줄 번호</b>를 누릅니다. 상단에서 고른 편집기(Visual Studio 또는 VS Code)가 그 줄에서 열립니다.</li>
+</ol>
+<p>키보드도 됩니다. 트리에서 <code>Enter</code>는 열기, <code>←</code>/<code>→</code>는 접기와 펼치기입니다.</p>
+<h3>표시 읽는 법</h3>
+<table>
+  <tr><th>표시</th><th>뜻</th></tr>
+  <tr><td>추정</td><td>소스에서 직접 확인되지 않은 연결입니다. 예: 디스패처에 등록한 핸들러, 가상 함수의 구현 후보, 메시지(레인)를 거친 호출</td></tr>
+  <tr><td>멈춤: 정의 없음</td><td>선언만 있고 본문을 찾지 못했습니다. 인터페이스나 함수 포인터로 부르는 경우가 많습니다.</td></tr>
+  <tr><td>외부</td><td>분석 범위 밖(표준 라이브러리, 외부 라이브러리)이라 들어가지 않았습니다.</td></tr>
+  <tr><td>못 본 것 N</td><td>분석이 놓친 부분 목록입니다. 결과를 믿기 전에 한 번 열어 봅니다.</td></tr>
+  <tr><td>N줄 묶음</td><td>한 문장에서 이어 부른 호출(<code>a().b()-&gt;c()</code>)입니다. 트리와 노드 보기에서 점선 상자 하나로 묶이고, 노드 보기에서는 선도 하나만 그어집니다. 추정 연결은 묶지 않습니다.</td></tr>
+  <tr><td>파란 줄 ▶</td><td>코드 칸에서 아래 칸으로 이어지는 호출 줄입니다. 줄 아래 호출 단추 중 따라 들어간 함수도 파랗게 표시됩니다. 노랑은 다른 호출이 있는 줄입니다.</td></tr>
+</table>
+
+<h2 id="views">4. 보기 8가지</h2>
+<table>
+  <tr><th>보기</th><th>쓸 때</th></tr>
+  <tr><td>트리 보기</td><td>기본 보기입니다. 진입점부터 호출을 들여쓰기 트리로 보여 줍니다. <span class="btn">모두 펼치기</span>와 <span class="btn">접기</span>가 있습니다.</td></tr>
+  <tr><td>노드 보기</td><td>같은 호출을 그래프로 봅니다. <span class="btn">화면 맞춤</span>이 있습니다.</td></tr>
+  <tr><td>노드 크게</td><td>그래프를 넓게 보고, 코드는 아래에 둡니다.</td></tr>
+  <tr><td>패킷 여정</td><td>이 패킷을 누가 보냈는지(프로세스, 함수, 줄), 중간에 어디를 거쳤는지, 여기서 보낸 패킷이 어느 프로세스의 어느 핸들러로 가는지 보여 줍니다.</td></tr>
+  <tr><td>흐름 요약</td><td>표시(설정, 스레드, 등록, 네트워크, DB, 캐시, 작업 단위)가 붙은 호출만 소스 순서대로 보여 줍니다. <code>main</code>에서는 시작 순서를, 핸들러에서는 DB·캐시 접근 순서를 봅니다.</td></tr>
+  <tr><td>전체 흐름도</td><td>프로세스와 클래스로 그린 지도입니다. 클래스 사이 호출 수와 프로세스를 넘는 패킷이 보이고, 고른 진입점이 거치는 클래스만 밝게 표시됩니다.</td></tr>
+  <tr><td>클래스 다이어그램</td><td>흐름에 나온 클래스의 부모 클래스와 멤버를 보여 줍니다.</td></tr>
+  <tr><td>점검 규칙</td><td>설정한 규칙(락 안 I/O 등)에 걸린 곳을 보여 줍니다. <a href="#checks">6장</a>에서 설명합니다.</td></tr>
+</table>
+
+<h2 id="review">5. AI가 고친 코드 리뷰하기</h2>
+<ol class="steps">
+  <li>AI에게 코드를 고치게 하기 <b>전에</b> <span class="btn">비교</span> → <b>지금 결과를 기준으로 저장</b>을 누릅니다.</li>
+  <li>AI가 코드를 고치면 30초 안에 신선도 배지가 <span class="btn">● 바뀜 N</span>으로 바뀝니다. 배지를 누르면 바뀐 파일이 보입니다. <span class="btn">다시 분석</span>을 누릅니다.</li>
+  <li><span class="btn">비교</span>를 열면 늘거나 준 진입점, 바뀐 함수(본문, 시그니처, 추가, 삭제), 바뀐 호출이 나옵니다. 공백이나 주석만 바뀐 함수는 세지 않습니다.</li>
+  <li>바뀐 함수를 누르고 <b>영향</b>을 보면, 그 함수를 거치는 <b>패킷</b>과 경로가 나옵니다. 경로를 누르면 코드 스택으로 읽을 수 있습니다.</li>
+  <li>이상한 곳은 <span class="btn">열기</span>로 편집기에서 고칩니다.</li>
+</ol>
+<div class="note">배지 뜻: <b>최신</b>은 분석에 쓴 파일이 지금과 모두 같다는 뜻입니다. <b>바뀜 N</b>은 N개 파일이 바뀌었다는 뜻입니다. <b>확인 불가</b>는 예전 형식이라 지문이 없다는 뜻이며, 다시 분석하면 없어집니다. 배지는 확인만 하고 분석을 직접 돌리지는 않습니다.</div>
+
+<h2 id="checks">6. 점검 규칙</h2>
+<p>상단의 방패 아이콘(점검 규칙)을 누르면 규칙마다 상태(<b>돌았음</b>, <b>꺼짐</b>, <b>오류</b>)와 지적 목록이 나옵니다.</p>
+<ul>
+  <li>지적을 누르면 진입점부터 그곳까지의 경로가 코드 스택으로 열리고, 근거 줄이 강조됩니다.</li>
+  <li>지적마다 <b>확실도</b>가 붙습니다. <b>높음</b>은 그 자리에 직접 호출이 있다는 뜻이고, <b>보통</b>은 아래 함수 안에서나 이름 표시로 판단했다는 뜻입니다. <b>낮음</b>은 추정 연결을 지나서 찾았다는 뜻입니다.</li>
+  <li>위쪽 <b>확실도 높음·보통·낮음</b> 단추로 보고 싶은 확실도만 남길 수 있습니다.</li>
+  <li>"고른 진입점만"을 켜면 지금 고른 진입점의 경로에 있는 지적만 남습니다.</li>
+  <li>규칙은 <code>targets\&lt;이름&gt;.json</code>의 <code>checks</code>에서 고칩니다. 고친 뒤에는 다시 분석 없이 <span class="btn">다시 점검</span>만 누르면 됩니다.</li>
+</ul>
+<table>
+  <tr><th>규칙 종류</th><th>찾는 것</th><th>예</th></tr>
+  <tr><td><code>forbidInScope</code></td><td>어떤 범위 안에서 부르면 안 되는 것을 부름</td><td>락 안에서 DB·네트워크 I/O</td></tr>
+  <tr><td><code>requireWithin</code></td><td>반드시 거쳐야 할 함수를 거치지 않고 닿음</td><td>작업 단위나 레인 밖에서 게임 상태 변경</td></tr>
+  <tr><td><code>order</code></td><td>A 다음에 B를 하는데, 되돌리는 C가 없음</td><td>재화 차감 뒤 지급하는데 실패 시 되돌리기가 없음</td></tr>
+  <tr><td><code>dependency</code></td><td>이 폴더가 저 폴더를 부르거나 <code>#include</code>함</td><td>공용 라이브러리가 서버 콘텐츠에 의존</td></tr>
+</table>
+<div class="warn">지적은 "여기를 보라"는 뜻이지 판정이 아닙니다. 지적이 없다는 것도 "문제가 없다"가 아니라 "찾지 못했다"는 뜻입니다.</div>
+
+<h2 id="ai">7. 문맥 복사와 AI 질문</h2>
+<ul>
+  <li><b>문맥 복사</b>: 코드 스택 위 버튼을 누르면 진입점부터 지금 함수까지의 경로, 코드, 호출 근거(파일:줄), 추정 연결, 못 본 것이 Markdown으로 복사됩니다. <b>코드 포함</b>을 끄면 함수 이름과 파일:줄 같은 구조만 복사됩니다.</li>
+  <li><b>AI에게 질문</b>: AI(Claude Code 또는 Codex)를 고르고 질문을 쓴 뒤 <span class="btn">보내기</span>를 누르면, 같은 문맥을 붙여 질문하고 답을 화면에 실시간으로 보여 줍니다. 실패 처리, 스레드, 입력 검증, 설명 같은 자주 묻는 질문은 버튼으로 있습니다. <span class="btn">중단</span>으로 멈출 수 있습니다.</li>
+  <li>AI는 <b>보내기를 누를 때만</b> 실행됩니다. AI는 대상 폴더를 읽기만 하고 파일을 고치지 않습니다. <code>claude</code>나 <code>codex</code> 명령이 PATH에 있어야 목록에 나옵니다.</li>
+</ul>
+<div class="warn">회사 코드: AI에 질문하면 코드가 AI 서비스로 전송됩니다. 회사 PC에서는 회사의 AI 사용 규정을 먼저 확인하세요.</div>
+
+<h2 id="report">8. 공유 보고서</h2>
+<ol class="steps">
+  <li>상단 <span class="btn">보고서</span>를 누릅니다.</li>
+  <li>범위(고른 진입점 또는 전체 진입점)와 넣을 항목(호출 트리, 패킷 여정, 흐름 요약, 점검)을 고릅니다.</li>
+  <li><span class="btn">만들기</span>를 누른 뒤 <b>복사</b>하거나 <b>내려받기(.md)</b>를 누릅니다.</li>
+</ol>
+<p>기본값은 <b>소스 본문과 절대 경로를 뺀</b> 구조만 담은 보고서입니다. "소스 본문 포함"을 켜면 경고가 나옵니다.</p>
+
+<h2 id="target">9. 대상 추가와 설정</h2>
+<ol class="steps">
+  <li><span class="btn">＋ 대상 추가</span>를 누릅니다. 폴더를 고르고 <span class="btn">이 폴더로 설정 만들기</span>를 누릅니다.</li>
+  <li>찾은 진입점 규칙과 예시를 확인하고, 필요 없는 규칙은 끕니다.</li>
+  <li><span class="btn">저장하고 분석</span>을 누릅니다.</li>
+</ol>
+<ul>
+  <li>폴더에 C++ 소스(<code>.cpp</code>, <code>.h</code>, <code>.vcxproj</code>)가 있으면 C++로, 없고 <code>.csproj</code>가 있으면 C#으로 봅니다.</li>
+  <li>설정은 <code>targets\&lt;이름&gt;.json</code>에 저장됩니다. 자동으로 찾은 것이 틀리면 이 파일을 직접 고칩니다. 키 설명은 README의 "대상 추가" 장에 있습니다.</li>
+  <li>분석 대상 폴더에는 아무것도 쓰지 않습니다. clangd 색인과 결과는 모두 <code>data\&lt;이름&gt;\</code>에 생깁니다.</li>
+</ul>
+<div class="warn"><code>data\</code>에는 대상 소스 코드가 들어 있습니다. 회사 코드로 만든 결과는 회사 PC 밖으로 가져가지 마세요.</div>
+
+<h2 id="mcp">10. MCP로 AI에 연결</h2>
+<p>Claude Code나 Codex가 분석 결과를 직접 조회하게 합니다. 한 번 빌드한 뒤 등록합니다.</p>
+<pre>dotnet build ReviewTool.slnx
+claude mcp add review-tool -- dotnet D:\Work\RockQ\Projects\review-tool\src\ReviewTool.Cli\bin\Debug\net10.0\ReviewTool.Cli.dll mcp
+codex  mcp add review-tool -- dotnet D:\Work\RockQ\Projects\review-tool\src\ReviewTool.Cli\bin\Debug\net10.0\ReviewTool.Cli.dll mcp</pre>
+<p>그다음 AI에게 이렇게 물으면 됩니다: "review-tool로 C2SLogin 흐름 보고, 락 안에서 DB 부르는 곳 있는지 봐 줘." MCP 도구는 13개(진입점, 흐름, 코드, 영향, 비교, 여정, 요약, 흐름도, 클래스, 점검 등)이며, 저장된 결과를 읽기만 합니다.</p>
+
+<h2 id="cli">11. 명령줄</h2>
+<p>모두 <code>dotnet run --project src/ReviewTool.Cli -- &lt;명령&gt;</code>으로 실행합니다.</p>
+<table>
+  <tr><th>명령</th><th>하는 일</th></tr>
+  <tr><td><code>init &lt;폴더&gt; [--name 이름]</code></td><td>폴더를 보고 대상 설정을 만듭니다.</td></tr>
+  <tr><td><code>analyze targets/이름.json</code></td><td>분석해서 <code>data/이름/trace.json</code>을 만듭니다.</td></tr>
+  <tr><td><code>show targets/이름.json</code></td><td>분석 결과를 요약해 출력합니다.</td></tr>
+  <tr><td><code>check targets/이름.json [--strict]</code></td><td>점검 규칙을 돌립니다. <code>--strict</code>를 붙이면 확실도 높음 지적이 있을 때 종료 코드 3으로 끝나 CI에 쓸 수 있습니다.</td></tr>
+  <tr><td><code>report targets/이름.json [--entry X] [--source] [--abs-paths] [--out 파일.md]</code></td><td>공유 보고서를 만듭니다.</td></tr>
+  <tr><td><code>mcp</code></td><td>MCP 서버를 실행합니다(AI 도구가 띄웁니다).</td></tr>
+</table>
+
+<h2 id="trouble">12. 문제 해결과 한계</h2>
+<table>
+  <tr><th>증상</th><th>해결</th></tr>
+  <tr><td>고친 화면이 안 바뀜</td><td>서버가 떠 있는 동안 빌드하면 DLL이 잠겨 예전 버전으로 뜹니다. 서버를 끄고 <code>dotnet build</code>에서 오류 0을 확인한 뒤 다시 실행하세요.</td></tr>
+  <tr><td>C++ 다시 분석 실패</td><td><code>clangd --version</code>이 되는지, Visual Studio C++ 도구가 설치되어 있는지 확인하세요.</td></tr>
+  <tr><td>편집기 목록이 비어 있음</td><td>Visual Studio(vswhere로 찾음)나 VS Code(<code>code</code>가 PATH에 있어야 함)가 없을 때입니다.</td></tr>
+  <tr><td>AI 목록이 비어 있음</td><td><code>claude</code>나 <code>codex</code> CLI가 PATH에 없을 때입니다.</td></tr>
+  <tr><td>호출이 빠져 보임</td><td><span class="btn">못 본 것</span>을 먼저 확인하세요. 아래 한계 때문일 수 있습니다.</td></tr>
+</table>
+<h3>알려진 한계</h3>
+<ul>
+  <li>정적 분석입니다. 가상 함수, <code>std::function</code>, 함수 포인터 너머는 "추정"이거나 "정의 없음"으로 보입니다.</li>
+  <li>C++에서 람다 안의 호출과 템플릿 생성자 호출은 clangd가 알려 주지 않아 빠집니다.</li>
+  <li>패킷 여정, 메시지 연결, 흐름 요약 표시, 점검은 이름과 소스 텍스트 규칙(정규식)으로 만든 추정입니다.</li>
+  <li>C#은 NuGet 패키지 안의 형식을 풀지 못합니다. 그 호출은 빠지거나 "외부"로 보입니다.</li>
+</ul>
+</main>
+</body>
+</html>

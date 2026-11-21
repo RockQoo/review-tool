@@ -47,6 +47,40 @@ public static class TraceQueries
 
     public static bool IsGuess(TraceEdge e) => e.Resolution != "Static";
 
+    // 호출의 첫 줄(소스 순서 기준). 호출 위치가 없으면 null.
+    public static int? FirstLine(TraceEdge e) => e.CallSites.Count > 0 ? e.CallSites.Min(s => s.Line) : null;
+
+    // 한 문장에서 이어 부른 호출(a().b()->c())을 한 덩어리로 보이게, 첫 줄이 같은 이웃 호출을 묶는다.
+    // children 은 소스 순서(TraceIndex.ChildrenOf)라고 본다. 둘 이상일 때만 Line 이 있고, 하나면 Line = null.
+    // 추정 연결(등록·메시지)은 실제 호출이 아니므로 묶지 않고 따로 둔다(점선 표시가 묶음 전체로 번지지 않게).
+    public static List<(int? Line, List<TraceEdge> Edges)> GroupByLine(IEnumerable<TraceEdge> children)
+    {
+        var groups = new List<(int? Line, List<TraceEdge> Edges)>();
+        List<TraceEdge>? run = null;
+        int? runLine = null;
+        void Flush()
+        {
+            if (run is { Count: > 0 })
+            {
+                groups.Add((run.Count > 1 ? runLine : null, run));
+            }
+        }
+        foreach (var e in children)
+        {
+            var line = IsGuess(e) ? null : FirstLine(e);
+            if (run is not null && line is not null && line == runLine)
+            {
+                run.Add(e);
+                continue;
+            }
+            Flush();
+            run = [e];
+            runLine = line;
+        }
+        Flush();
+        return groups;
+    }
+
     // 추정 연결의 화면 이름
     public static string ResolutionText(string resolution) => resolution switch
     {

@@ -133,6 +133,26 @@ public class AiLinkTests
     }
 
     [Fact]
+    public void 한_문장에서_이어_부른_호출은_같은_줄_묶음이_된다()
+    {
+        // 42: a.Move().Write()->RequestMove(...)  /  48: notify.Set(...)  /  50: A(); B();  (같은 줄 둘)
+        TraceEdge E(string to, params int[] lines) =>
+            new() { From = "H", To = to, CallSites = [.. lines.Select(l => new SourceRef { File = "h.cpp", Line = l })] };
+        var children = new List<TraceEdge>
+        {
+            E("Move", 42), E("Write", 42), E("RequestMove", 42), E("Set", 48), E("A", 50), E("B", 50, 60),
+            E("Push", 72), E("OnPush", 72), E("NoSite"),
+        };
+        children[7].Resolution = "Message";   // 72: Push(EMsg::X) → 등록 핸들러(추정)는 묶지 않는다
+
+        var groups = TraceQueries.GroupByLine(children);
+
+        Assert.Equal(["42:Move,Write,RequestMove", "-:Set", "50:A,B", "-:Push", "-:OnPush", "-:NoSite"],
+                     groups.Select(g => $"{g.Line?.ToString() ?? "-"}:{string.Join(",", g.Edges.Select(e => e.To))}"));
+        Assert.Empty(TraceQueries.GroupByLine([]));
+    }
+
+    [Fact]
     public void Claude_스트림_해석()
     {
         var lines = new[]

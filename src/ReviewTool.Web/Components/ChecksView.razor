@@ -5,7 +5,7 @@
 @* 점검 규칙: 대상 설정(checks)의 규칙마다 상태와 지적. 저장된 분석 결과로 그때그때 돌아서, 규칙을 고친 뒤 "다시 점검"만 누르면 된다. *@
 <div class="checks">
     <div class="tree-tools">
-        <button class="link" title="설정 파일을 다시 읽어 점검합니다(재분석은 필요 없음)" @onclick="Reload">다시 점검</button>
+        <button class="link" title="설정 파일을 다시 읽어 점검합니다(다시 분석은 필요 없음)" @onclick="ReloadClicked">다시 점검</button>
         <span class="tags" role="group" aria-label="확실도 고르기">
             @foreach (var c in AllCertainties)
             {
@@ -107,6 +107,14 @@
     [Parameter, EditorRequired] public TraceIndex Index { get; set; } = default!;
     [Parameter] public string? EntryNodeId { get; set; }
     [Parameter] public EventCallback<Checks.Finding> OnOpen { get; set; }
+    // 다시 점검하면 이전 지적의 근거 줄 표시를 지우게 부모에 알린다
+    [Parameter] public EventCallback OnReloaded { get; set; }
+
+    private async Task ReloadClicked()
+    {
+        Reload();
+        await OnReloaded.InvokeAsync();
+    }
 
     private static readonly Certainty[] AllCertainties = [Certainty.High, Certainty.Medium, Certainty.Low];
     private Checks.Report? report;

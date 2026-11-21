@@ -11,7 +11,7 @@
 
 <div class="app">
     <header class="topbar">
-        <strong class="brand">review-tool</strong>
+        <button class="brand" title="기본 화면으로 (대상 추가·비교·보고서 등 열린 창 닫기)" @onclick="GoHome">review-tool</button>
         <select value="@target" @onchange="OnTargetChanged" disabled="@(Workspace.RunningTarget is not null)">
             @foreach (var t in Workspace.ListTargets())
             {
@@ -24,7 +24,8 @@
         </button>
         @if (Workspace.RunningTarget is null)
         {
-            <button @onclick="Analyze" disabled="@(target is null || adding)">재분석</button>
+            <button @onclick="Analyze" disabled="@(target is null || adding)"
+                    title="@($"{target} 소스를 다시 읽어 호출 트리를 새로 만듭니다 (코드는 고치지 않음)")">다시 분석</button>
         }
         else
         {
@@ -32,8 +33,8 @@
         }
         @if (Editors.Available.Count > 0)
         {
-            <label class="editor-pick" title="코드 스택의 '열기'와 줄 번호를 누르면 이 편집기에서 연다">
-                편집기
+            <label class="editor-pick" title="코드 스택의 '열기'와 줄 번호를 누르면 이 프로그램으로 파일을 엽니다 (이 도구는 편집하지 않음)">
+                코드 열기
                 <select value="@editorId" @onchange="OnEditorChanged">
                     @foreach (var ed in Editors.Available)
                     {
@@ -100,11 +101,11 @@
             }
             else if (freshness.State == FreshnessState.Unknown)
             {
-                <p>확인할 수 없습니다: @freshness.Reason 재분석하면 확인할 수 있게 됩니다.</p>
+                <p>확인할 수 없습니다: @freshness.Reason 다시 분석하면 확인할 수 있게 됩니다.</p>
             }
             else
             {
-                <p>분석 뒤 바뀐 것이 있습니다. 코드 스택의 줄 번호·코드가 지금과 다를 수 있습니다. <b>재분석</b>을 누르세요.</p>
+                <p>분석 뒤 바뀐 것이 있습니다. 코드 스택의 줄 번호·코드가 지금과 다를 수 있습니다. <b>다시 분석</b>을 누르세요.</p>
                 <ul>
                     @if (freshness.ConfigChanged)
                     {
@@ -157,7 +158,7 @@
             </div>
             @if (snapshots.Count == 0)
             {
-                <p>비교할 기준이 없습니다. 고치기 전에 <b>지금 결과를 기준으로 저장</b>을 누르거나, 한 번 더 재분석하면 직전 분석이 자동으로 기준이 됩니다.</p>
+                <p>비교할 기준이 없습니다. 고치기 전에 <b>지금 결과를 기준으로 저장</b>을 누르거나, 한 번 더 다시 분석하면 직전 분석이 자동으로 기준이 됩니다.</p>
             }
             else if (comparison is not null)
             {
@@ -206,6 +207,10 @@
             {
                 <p>아직 분석 대상이 없습니다. 분석할 서버 폴더를 고르면 설정을 자동으로 만듭니다.</p>
             }
+            else if (target is not null)
+            {
+                <button class="link back" @onclick="() => adding = false">← 돌아가기</button>
+            }
             <TargetSetup OnSaved="OnTargetSaved" OnCancel="() => adding = false" />
         </main>
     }
@@ -218,7 +223,7 @@
             }
             else
             {
-                <p><b>@target</b>의 분석 결과가 아직 없습니다. 위의 <b>재분석</b>을 누르세요.</p>
+                <p><b>@target</b>의 분석 결과가 아직 없습니다. 위의 <b>다시 분석</b>을 누르세요.</p>
             }
             <p class="hint-line">설정 파일: @Workspace.ConfigPath(target)</p>
         </main>
@@ -241,6 +246,7 @@
                     }
                 }
             </nav>
+            <div class="splitter v" data-var="--w-entries" title="끌어서 너비 조절 · 두 번 누르면 기본 크기"></div>
 
             <section class="pane tree @(viewMode is "graph" or "wide" or "map" or "classes" ? "graph-mode" : "")">
                 @if (selectedEntry is null && NeedsEntry)
@@ -255,7 +261,8 @@
                 else if (viewMode == "checks")
                 {
                     <div class="view-title">점검 규칙 · <b>@target</b></div>
-                    <ChecksView Target="@(target ?? "")" Graph="graph" Index="index" EntryNodeId="@selectedEntry?.NodeId" OnOpen="OpenFinding" />
+                    <ChecksView Target="@(target ?? "")" Graph="graph" Index="index" EntryNodeId="@selectedEntry?.NodeId" OnOpen="OpenFinding"
+                                OnReloaded="() => flagged.Clear()" />
                 }
                 else if (viewMode == "journey")
                 {
@@ -302,6 +309,14 @@
                     </div>
                 }
             </section>
+            @if (LayoutMode == "wide")
+            {
+                <div class="splitter h" data-var="--h-top" title="끌어서 높이 조절 · 두 번 누르면 기본 크기"></div>
+            }
+            else
+            {
+                <div class="splitter v" data-var="@(LayoutMode == "graph" ? "--w-graph" : "--w-tree")" title="끌어서 너비 조절 · 두 번 누르면 기본 크기"></div>
+            }
 
             <section class="pane stack">
                 @if (impact is not null && graph.Nodes.TryGetValue(impact.TargetId, out var target_))
@@ -384,7 +399,7 @@
                         </div>
                         @if (FileChanged(node.File))
                         {
-                            <div class="note warn">이 파일은 분석 뒤 바뀌었습니다. 아래 코드와 줄 번호는 분석 당시 것입니다 — 재분석하세요.</div>
+                            <div class="note warn">이 파일은 분석 뒤 바뀌었습니다. 아래 코드와 줄 번호는 분석 당시 것입니다 — 다시 분석하세요.</div>
                         }
                         @if (node.Kind == NodeKind.External)
                         {
@@ -405,7 +420,7 @@
                                     var isOpen = openLine == (frameIndex, lineNo);
                                     var isFlag = flagged.Count > 0 && flagged.Contains((node.File, lineNo));
                                     <div class="line @(hasCalls ? "call" : "") @(isNext ? "next" : "") @(isOpen ? "open" : "") @(isFlag ? "flag" : "")"
-                                         title="@(isFlag ? "점검 지적의 근거 줄" : null)"
+                                         title="@(isFlag ? "점검 지적의 근거 줄" : isNext ? "아래 칸으로 이어지는 호출" : null)"
                                          tabindex="@(hasCalls ? "0" : null)" role="@(hasCalls ? "button" : null)"
                                          @onclick="() => ToggleLine(frameIndex, lineNo, hasCalls)"
                                          @onkeydown="e => OnLineKey(e, frameIndex, lineNo, hasCalls)">
@@ -418,7 +433,8 @@
                                             @foreach (var callee in lineCalls)
                                             {
                                                 var cn = graph.Nodes[callee];
-                                                <button class="chip @KindClass(cn)" @onclick="() => PushFrame(frameIndex, callee)"
+                                                var followed = frameIndex + 1 < stack.Count && stack[frameIndex + 1] == callee;
+                                                <button class="chip @KindClass(cn) @(followed ? "on" : "")" title="@(followed ? "아래 칸으로 따라 들어간 함수" : null)" @onclick="() => PushFrame(frameIndex, callee)"
                                                         @onclick:stopPropagation="true" disabled="@(cn.Kind == NodeKind.External)">
                                                     @ShortName(cn.Name)
                                                 </button>
@@ -642,6 +658,18 @@
             return;
         }
 
+        // 칸 크기(경계선 끌기): 칸이 새로 그려질 때마다(대상 추가에서 돌아올 때 등) 저장한 크기를 다시 붙인다
+        var panesVisible = !adding && target is not null && graph is not null && index is not null;
+        if (panesVisible && !splitsApplied)
+        {
+            await graphModule.InvokeVoidAsync("initSplitters");
+            splitsApplied = true;
+        }
+        else if (!panesVisible)
+        {
+            splitsApplied = false;
+        }
+
         // 그래프 칸(graph-canvas)이 지금 화면에 있는지. 없으면 JS 쪽 인스턴스를 반드시 정리한다
         // (대상 추가 화면으로 갔다 오면 칸이 새로 만들어지므로 다시 그려야 한다).
         var canvasVisible = !adding && target is not null && viewMode is "graph" or "wide" && selectedEntry is not null &&
@@ -686,8 +714,22 @@
         }
     }
 
+    private bool splitsApplied;
+
+    // 기본 화면으로: 대상 추가·패널을 닫는다(고른 진입점과 코드 스택은 그대로)
+    private void GoHome()
+    {
+        adding = false;
+        showCompare = false;
+        showReport = false;
+        showDiagnostics = false;
+        showFreshness = false;
+        impact = null;
+    }
+
     private async Task SetViewMode(string mode)
     {
+        adding = false;   // 대상 추가 화면에서 보기 아이콘을 누르면 그 보기로 돌아간다
         viewMode = mode;
         renderedGraphKey = null;   // 칸 크기가 바뀌므로 다시 배치(인스턴스 정리는 graphInstanceAlive 로 따로 판단)
         if (graphModule is not null)
@@ -757,6 +799,30 @@
                 (treeChildren.TryGetValue(from, out var list) ? list : treeChildren[from] = []).Add(to);
             }
         }
+        // 같은 줄 묶음: 트리 자식 중 첫 호출 줄이 같은 이웃(둘 이상)을 "N줄" 상자 하나에 넣고 선도 하나만 긋는다
+        var groupOf = new Dictionary<string, string>();          // 분석 노드 id → 묶음 그래프 id
+        var groupNodes = new List<(string Gid, int Line)>();
+        var kidGroups = new Dictionary<string, List<(int? Line, List<string> Members)>>();
+        foreach (var (from, kids) in treeChildren)
+        {
+            var kidEdges = kids.Select(k => index!.ChildrenOf(from).First(e => e.To == k));
+            var list = kidGroups[from] = [];
+            foreach (var (line, group) in TraceQueries.GroupByLine(kidEdges))
+            {
+                list.Add((line, group.Select(e => e.To).ToList()));
+                if (line is not int ln)
+                {
+                    continue;
+                }
+                var gid = "line" + groupNodes.Count;
+                groupNodes.Add((gid, ln));
+                foreach (var e in group)
+                {
+                    groupOf[e.To] = gid;
+                }
+            }
+        }
+
         var columnX = new Dictionary<int, double>();
         var x = 0.0;
         foreach (var d in depthOf.Values.Distinct().Order())
@@ -767,12 +833,39 @@
         }
         var position = new Dictionary<string, (double X, double Y)>();
         var nextY = 0.0;
-        double Place(string id)
+        // fixedY: 같은 줄 묶음의 함수는 묶음 안에서 붙어 있게 자리를 먼저 정하고, 그 아래 호출은 오른쪽 열에서 그 높이부터 놓는다
+        double Place(string id, double? fixedY = null)
         {
-            double y;
-            if (treeChildren.TryGetValue(id, out var kids) && kids.Count > 0)
+            var ys = new List<double>();
+            if (kidGroups.TryGetValue(id, out var groups))
             {
-                var ys = kids.Select(Place).ToList();
+                if (fixedY is double start)
+                {
+                    nextY = Math.Max(nextY, start);
+                }
+                foreach (var (line, members) in groups)
+                {
+                    if (line is null)
+                    {
+                        ys.Add(Place(members[0]));
+                        continue;
+                    }
+                    nextY += 18;   // 묶음 상자의 "N줄" 글자 자리
+                    var top = nextY;
+                    for (var i = 0; i < members.Count; i++)
+                    {
+                        ys.Add(Place(members[i], top + i * 34));
+                    }
+                    nextY = Math.Max(nextY, top + members.Count * 34) + 12;
+                }
+            }
+            double y;
+            if (fixedY is double fy)
+            {
+                y = fy;
+            }
+            else if (ys.Count > 0)
+            {
                 y = (ys.First() + ys.Last()) / 2;
             }
             else
@@ -786,6 +879,10 @@
         Place(root);
 
         var elements = new List<object>();
+        foreach (var (gid, line) in groupNodes)
+        {
+            elements.Add(new { data = new { id = gid, label = $"{line}줄" }, classes = "line-group" });
+        }
         foreach (var id in depthOf.Keys)
         {
             var gid = "g" + graphIdOfNode.Count;
@@ -798,22 +895,35 @@
             if (node.Stop == StopReason.Hidden) classes.Add("hidden");
             if (more.Contains(id)) classes.Add("more");
             var (px, py) = position[id];
+            var data = new Dictionary<string, object> { ["id"] = gid, ["label"] = ShortName(node.Name) };
+            if (groupOf.TryGetValue(id, out var parentGroup))
+            {
+                data["parent"] = parentGroup;
+            }
             elements.Add(new
             {
-                data = new { id = gid, label = ShortName(node.Name) },
+                data,
                 position = new { x = px, y = py },
                 classes = string.Join(' ', classes),
             });
         }
+        var emitted = new HashSet<string>();
         foreach (var (from, to) in edges.Distinct())
         {
-            var (a, b) = (graphIdOfNode[from], graphIdOfNode[to]);
+            var a = graphIdOfNode[from];
+            // 트리 자식이 묶음 안에 있으면 선은 묶음 상자로 하나만
+            var toGroup = graphParent.TryGetValue(to, out var tp) && tp == from && groupOf.TryGetValue(to, out var g) ? g : null;
+            var b = toGroup ?? graphIdOfNode[to];
+            if (!emitted.Add($"{a}->{b}"))
+            {
+                continue;
+            }
             var classes = new List<string>();
-            if (depthOf[to] <= depthOf[from])
+            if (toGroup is null && depthOf[to] <= depthOf[from])
             {
                 classes.Add("back");
             }
-            if (index!.ChildrenOf(from).Any(e => e.To == to && TraceQueries.IsGuess(e)))
+            if (index!.ChildrenOf(from).Any(e => (toGroup is null ? e.To == to : groupOf.GetValueOrDefault(e.To) == toGroup) && TraceQueries.IsGuess(e)))
             {
                 classes.Add("guess");
             }
@@ -872,13 +982,27 @@
         if (selectedEntry is not null && graph?.EntryPoints.FirstOrDefault(e => e.NodeId == selectedEntry.NodeId) is { } same)
         {
             selectedEntry = same;
-            stack = stack.Where(id => graph.Nodes.ContainsKey(id)).ToList();
+            // 새 결과에서도 이어지는 앞부분까지만 남긴다(사라진 함수·끊긴 호출 뒤는 버림)
+            var kept = new List<string>();
+            foreach (var id in stack)
+            {
+                if (!graph.Nodes.ContainsKey(id) || (kept.Count == 0 ? id != same.NodeId : !index!.ChildrenOf(kept[^1]).Any(e => e.To == id)))
+                {
+                    break;
+                }
+                kept.Add(id);
+            }
+            stack = kept.Count > 0 ? kept : [same.NodeId];
+            openLine = null;
+            flagged.Clear();
         }
         else
         {
             selectedEntry = null;
             stack = [];
             expanded.Clear();
+            openLine = null;
+            flagged.Clear();
         }
         RefreshFreshness();
         if (showCompare)
@@ -970,7 +1094,7 @@
         {
             baselineId = saved.Id;
             RefreshCompare(keepSelection: true);
-            notice = $"기준으로 저장했습니다: {saved.Label}. 코드를 고친 뒤 재분석하고 비교하세요.";
+            notice = $"기준으로 저장했습니다: {saved.Label}. 코드를 고친 뒤 다시 분석하고 비교하세요.";
         }
     }
 
@@ -1124,9 +1248,25 @@
             @if (isOpen && children.Count > 0)
             {
                 <div class="children">
-                    @foreach (var c in children)
+                    @foreach (var (line, group) in TraceQueries.GroupByLine(children))
                     {
-                        @RenderNode([.. path, c.To], c)
+                        @if (line is int ln)
+                        {
+                            @* 한 문장에서 이어 부른 호출은 한 덩어리로 *@
+                            <div class="line-group">
+                                <div class="line-group-head" title="이 줄 한 문장에서 부르는 함수 @(group.Count)개">
+                                    @(ln)줄 <span class="mono">@LineText(node, ln)</span>
+                                </div>
+                                @foreach (var c in group)
+                                {
+                                    @RenderNode([.. path, c.To], c)
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            @RenderNode([.. path, group[0].To], group[0])
+                        }
                     }
                 </div>
             }
@@ -1283,6 +1423,19 @@
     // ---- 표시 ----
 
     private static string ShortName(string name) => TraceQueries.ShortName(name);
+
+    // 함수 본문의 한 줄(앞뒤 공백 빼고, 길면 줄임)
+    private static string LineText(TraceNode node, int line)
+    {
+        var lines = node.Code.Split('\n');
+        var i = line - node.StartLine;
+        if (i < 0 || i >= lines.Length)
+        {
+            return "";
+        }
+        var text = lines[i].Trim();
+        return text.Length > 60 ? text[..57] + "…" : text;
+    }
 
     private static string KindClass(TraceNode n) => n.Kind == NodeKind.External ? "external"
         : n.Stop == StopReason.Hidden ? "hidden" : "";

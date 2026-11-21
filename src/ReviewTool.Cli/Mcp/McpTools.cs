@@ -123,7 +123,7 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
             }
             if (loaded is null)
             {
-                sb.Append("- 분석 결과 없음(review-tool analyze 또는 화면의 재분석)\n\n");
+                sb.Append("- 분석 결과 없음(review-tool analyze 또는 화면의 다시 분석)\n\n");
                 continue;
             }
             var g = loaded.Value.Graph;

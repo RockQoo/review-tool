@@ -8,6 +8,7 @@
     --accent-soft: #e6efff;
     --call: #fff6d6;
     --next: #ffe08a;
+    --sel: #d3e3ff;
     --warn: #b35900;
     --ext: #8a8f98;
     --code-bg: #fbfbfc;
@@ -25,6 +26,7 @@
         --accent-soft: #233150;
         --call: #3a3420;
         --next: #5c4a12;
+        --sel: #1e3a6b;
         --warn: #ffb066;
         --ext: #6c727c;
         --code-bg: #1a1c21;
@@ -105,13 +107,30 @@ select, input.search {
 .panes {
     flex: 1;
     display: grid;
-    grid-template-columns: 240px minmax(280px, 380px) 1fr;
+    /* 칸 | 경계선 | 칸 | 경계선 | 칸. 칸 크기는 경계선을 끌면 CSS 변수로 들어온다(js/graph.js initSplitters) */
+    grid-template-columns: var(--w-entries, 240px) 5px var(--w-tree, minmax(280px, 380px)) 5px minmax(240px, 1fr);
     min-height: 0;
 }
 
-.pane { overflow: auto; border-right: 1px solid var(--border); min-height: 0; }
-.pane:last-child { border-right: none; }
+.pane { overflow: auto; min-height: 0; min-width: 0; }
 .hint { color: var(--muted); padding: 16px; }
+
+/* 칸 경계선: 끌어서 크기 조절, 두 번 누르면 기본 크기 */
+.splitter { position: relative; background: var(--border); cursor: col-resize; touch-action: none; user-select: none; }
+.splitter.h { cursor: row-resize; }
+.splitter::after {
+    content: ""; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 3px; height: 28px; border-left: 1px dotted var(--muted); border-right: 1px dotted var(--muted);
+}
+.splitter.h::after { width: 28px; height: 3px; border: none; border-top: 1px dotted var(--muted); border-bottom: 1px dotted var(--muted); }
+.splitter:hover, .splitter.drag { background: var(--accent); }
+body.resizing-col, body.resizing-col * { cursor: col-resize !important; user-select: none; }
+body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-select: none; }
+
+/* 왼쪽 위 이름 = 기본 화면으로 */
+.topbar button.brand { border: none; background: none; padding: 0; margin-right: 6px; font-weight: 700; }
+.topbar button.brand:hover { color: var(--accent); }
+.empty .back { display: inline-block; margin-bottom: 12px; padding: 0; }
 
 /* 보기 방식 아이콘 (Lucide SVG 를 마스크로 써서 글자색을 따른다) */
 .views { display: inline-flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
@@ -129,13 +148,14 @@ select, input.search {
 }
 
 /* 노드 보기: 가운데 칸을 넓힌다 */
-.panes.mode-graph { grid-template-columns: 240px minmax(360px, 1fr) minmax(420px, 1fr); }
+.panes.mode-graph { grid-template-columns: var(--w-entries, 240px) 5px var(--w-graph, minmax(360px, 1fr)) 5px minmax(320px, 1fr); }
 
 /* 노드 크게: 위는 그래프, 아래는 코드 스택 */
-.panes.mode-wide { grid-template-columns: 240px 1fr; grid-template-rows: minmax(260px, 48%) 1fr; }
-.panes.mode-wide .entries { grid-row: 1 / span 2; }
-.panes.mode-wide .tree { border-right: none; border-bottom: 1px solid var(--border); }
-.panes.mode-wide .stack { grid-column: 2; padding-bottom: 20vh; }
+.panes.mode-wide { grid-template-columns: var(--w-entries, 240px) 5px minmax(0, 1fr); grid-template-rows: var(--h-top, minmax(260px, 48%)) 5px minmax(0, 1fr); }
+.panes.mode-wide .entries, .panes.mode-wide .splitter.v { grid-row: 1 / span 3; }
+.panes.mode-wide .tree { grid-column: 3; grid-row: 1; }
+.panes.mode-wide .splitter.h { grid-column: 3; grid-row: 2; }
+.panes.mode-wide .stack { grid-column: 3; grid-row: 3; padding-bottom: 20vh; }
 
 .pane.tree.graph-mode { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }
 .graph-canvas { flex: 1; min-height: 200px; background: var(--code-bg); border-top: 1px solid var(--border); }
@@ -229,6 +249,9 @@ select, input.search {
 .tree-tools { display: flex; gap: 10px; align-items: center; padding: 0 6px 8px; font-size: 12px; color: var(--muted); }
 .tree-body { font-family: var(--mono); font-size: 12.5px; }
 .children { margin-left: 14px; border-left: 1px dotted var(--border); }
+/* 한 문장에서 이어 부른 호출 묶음 */
+.line-group { margin: 2px 0 2px 4px; border: 1px dashed var(--border); border-radius: 4px; background: color-mix(in srgb, var(--accent-soft) 35%, transparent); }
+.line-group-head { font-size: 11px; color: var(--muted); padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .row {
     display: flex;
@@ -313,13 +336,17 @@ select, input.search {
 .line .src { flex: 1; padding-right: 12px; }
 .line.call { background: var(--call); cursor: pointer; }
 .line.call:hover .src { text-decoration: underline dotted; }
-.line.next { background: var(--next); }
+/* 아래 칸으로 이어지는 줄: 파랑(노드 보기의 고른 상자와 같은 색) + ▶ + 왼쪽 막대 */
+.line.next { background: var(--sel); box-shadow: inset 4px 0 0 var(--accent); }
+.line.next .ln { color: var(--accent); font-weight: 700; }
+.line.next .ln::before { content: "▶ "; font-size: 10px; }
 .line.open { outline: 1px solid var(--accent); }
 
 .callees { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 6px 64px; background: var(--accent-soft); }
 .chip { font-family: var(--mono); font-size: 12px; padding: 1px 8px; border-radius: 10px; }
 .chip.external { color: var(--ext); }
 .chip.hidden { font-style: italic; }
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 .note { color: var(--muted); font-size: 12px; padding: 4px 12px; }
 
