@@ -24,6 +24,7 @@ public sealed class EditorLauncher(ILogger<EditorLauncher> logger)
             return $"파일이 없습니다: {file}";
         }
         var psi = new ProcessStartInfo(editor.Executable) { UseShellExecute = false, CreateNoWindow = true };
+        ClearHostEnvironment(psi);
         switch (editor.Id)
         {
             case "vs":
@@ -48,6 +49,19 @@ public sealed class EditorLauncher(ILogger<EditorLauncher> logger)
         {
             logger.LogWarning(ex, "편집기 실행 실패 {Editor}", editor.Name);
             return $"{editor.Name} 실행 실패: {ex.Message}";
+        }
+    }
+
+    // 이 서버를 VS Code 확장(Claude Code 등) 안에서 띄우면 ELECTRON_RUN_AS_NODE=1 과 VSCODE_* 를 물려받는다.
+    // 그대로 Code.exe 를 실행하면 창이 아니라 Node 로 돌아 아무 일 없이 끝난다(실측 2026-11-21). 편집기에는 넘기지 않는다.
+    public static void ClearHostEnvironment(ProcessStartInfo psi)
+    {
+        foreach (var key in psi.Environment.Keys.ToList())
+        {
+            if (key.StartsWith("ELECTRON_", StringComparison.OrdinalIgnoreCase) || key.StartsWith("VSCODE_", StringComparison.OrdinalIgnoreCase))
+            {
+                psi.Environment.Remove(key);
+            }
         }
     }
 

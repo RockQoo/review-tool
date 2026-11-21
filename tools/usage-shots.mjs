@@ -86,7 +86,7 @@ await waitFor(`document.querySelectorAll('.frame').length >= 2`);
 await evaluate(`${find('#frame-0 .line.call', LINE)}?.click()`);
 await sleep(500);
 await scene('main', '기본 화면', '진입점 고르기 → 트리에서 함수 → 오른쪽에 코드가 이어 붙음', [
-  { sel: 'header button.brand', name: '기본 화면', desc: '대상 추가·비교·보고서 창 닫고 돌아가기' },
+  { sel: 'header button.brand', name: '홈', desc: '대상 추가·비교·보고서 창 닫고 기본 화면으로' },
   { sel: 'header.topbar > select', name: '대상', desc: '분석할 서버 고르기' },
   { sel: 'header button', text: '대상 추가', name: '대상 추가', desc: '새 폴더 등록 · 설정 자동 생성' },
   { sel: 'header button', text: '다시 분석', name: '다시 분석', desc: '고른 대상의 소스를 다시 읽어 호출 트리 새로 만들기 · 코드는 안 고침' },
@@ -197,12 +197,12 @@ await sleep(900);
 await scene('graph', '노드 보기', '같은 호출을 그래프로 · 끌기 / 휠 확대', [
   { sel: '.tree-tools label', text: '깊이', name: '깊이', desc: '몇 단계까지 그릴지' },
   { sel: '.tree-tools label', text: '외부 호출', name: '외부 호출', desc: '범위 밖 함수 표시' },
-  { sel: '.tree-tools button', text: '화면 맞춤', name: '화면 맞춤', desc: '전체가 보이게' },
+  { sel: '.tree-tools button', text: '화면 맞춤', name: '화면 맞춤', desc: '처음 배치로 되돌리기' },
   { cy: 'graph-canvas', label: 'HandleMove', name: '진입점', desc: '갈색 = 시작' },
-  { cy: 'graph-canvas', label: '줄', name: '같은 줄 묶음', desc: '한 문장의 호출 · 선 하나' },
+  { cy: 'graph-canvas', label: '줄', name: '같은 줄 묶음', desc: '누르면 그 줄 선택 · 선 하나' },
   { cy: 'graph-canvas', label: FN, name: '고른 함수', desc: '파랑 = 고른 것과 경로' },
   { cy: 'graph-canvas', label: 'OnFanout', name: '추정 연결', desc: '주황 점선 = 메시지·등록 (추정)' },
-  { sel: '.graph-legend', name: '범례', desc: '선·테두리 뜻' },
+  { sel: '.graph-legend', name: '범례', desc: '선 숫자 = 호출 줄 · 끌면 아래 호출도 같이' },
 ]);
 
 await view('패킷 여정');
@@ -255,7 +255,7 @@ await view('트리 보기');
 await click('header button', '대상 추가');
 await waitFor(`!!document.querySelector('.setup .folders')`);
 await scene('setup', '대상 추가', '새 서버 폴더 등록', [
-  { sel: '.empty .back', name: '돌아가기', desc: '원래 화면으로 (보기 아이콘·review-tool 글자도 됨)' },
+  { sel: '.empty .back', name: '돌아가기', desc: '원래 화면으로 (보기 아이콘·홈도 됨)' },
   { sel: '.setup input.path', name: '경로', desc: '직접 입력 · 이동' },
   { sel: '.setup .folders', name: '폴더 목록', desc: '눌러서 들어가기' },
   { sel: '.setup button.primary', name: '설정 만들기', desc: '이 폴더로 진입점 찾기' },

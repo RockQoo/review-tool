@@ -24,6 +24,7 @@ function styles() {
                 'border-style': 'dashed', 'border-color': css('--muted'), 'padding': '6px',
             }
         },
+        { selector: 'node.line-group.picked', style: { 'border-style': 'solid', 'border-width': 2, 'border-color': css('--accent'), 'background-opacity': 0.7 } },
         { selector: 'node.external', style: { 'color': css('--ext'), 'border-style': 'dashed' } },
         { selector: 'node.hidden', style: { 'color': css('--ext'), 'font-style': 'italic' } },
         { selector: 'node.more', style: { 'border-color': css('--warn'), 'border-style': 'dotted' } },
@@ -36,13 +37,59 @@ function styles() {
                 'taxi-turn': 20, 'arrow-scale': 0.8,
             }
         },
+        // 호출 줄 번호(화살표 앞). 노드를 옮겨도 소스 순서를 읽을 수 있게
+        {
+            selector: 'edge[label != ""]', style: {
+                'target-label': 'data(label)', 'target-text-offset': 18, 'target-text-margin-y': -7,
+                'font-size': 9, 'color': css('--muted'), 'font-family': 'Cascadia Code, Consolas, monospace',
+            }
+        },
         { selector: 'edge.back', style: { 'line-style': 'dashed' } },
         { selector: 'edge.guess', style: { 'line-style': 'dotted', 'line-color': css('--warn'), 'target-arrow-color': css('--warn') } },
-        { selector: 'edge.onpath', style: { 'width': 2.5, 'line-color': css('--accent'), 'target-arrow-color': css('--accent') } },
+        { selector: 'edge.onpath', style: { 'width': 2.5, 'line-color': css('--accent'), 'target-arrow-color': css('--accent'), 'color': css('--accent') } },
     ];
 }
 
-export function render(id, elements, rootId, path, dotnet) {
+// 노드를 끌면 트리 자식·손자(data.tp = 트리 부모)도 같이 옮긴다. 묶음 상자는 안의 함수들의 자식까지.
+// 묶음 상자 자체는 안의 노드를 따라 Cytoscape 가 옮기므로, 실제로 옮기는 것은 묶음이 아닌 노드뿐이다.
+function enableSubtreeDrag(cy) {
+    const kids = new Map();
+    cy.nodes().forEach(n => {
+        const tp = n.data('tp');
+        if (tp) (kids.get(tp) ?? kids.set(tp, []).get(tp)).push(n.id());
+    });
+    let moving = [];
+    let last = null;
+    cy.on('grab', 'node', ev => {
+        const start = ev.target;
+        const roots = start.isParent() ? start.children().map(c => c.id()) : [start.id()];
+        const seen = new Set(roots);
+        const queue = [...roots];
+        while (queue.length) {
+            for (const k of kids.get(queue.shift()) ?? []) {
+                if (!seen.has(k)) { seen.add(k); queue.push(k); }
+            }
+        }
+        // 잡은 것(과 묶음이면 안의 노드)은 Cytoscape 가 옮긴다
+        roots.forEach(r => seen.delete(r));
+        moving = [...seen].map(k => cy.getElementById(k)).filter(n => !n.isParent());
+        last = { ...start.position() };
+    });
+    cy.on('drag', 'node', ev => {
+        if (!last) return;
+        const p = ev.target.position();
+        const d = { x: p.x - last.x, y: p.y - last.y };
+        last = { ...p };
+        moving.forEach(n => n.shift(d));
+    });
+    cy.on('free', 'node', () => { moving = []; last = null; });
+}
+
+export function scrollToSelector(selector) {
+    document.querySelector(selector)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+export function render(id, elements, rootId, path, dotnet, picked) {
     destroy(id);
     const container = document.getElementById(id);
     if (!container || !window.cytoscape) return;
@@ -52,6 +99,13 @@ export function render(id, elements, rootId, path, dotnet) {
         layout: { name: 'preset' },
         wheelSensitivity: 0.25, minZoom: 0.05, maxZoom: 3,
     });
+    // 같은 줄 묶음 안의 함수: 왼쪽 끝을 맞추고, 끌어도 움직이지 않게 고정(묶음은 상자를 잡고 통째로 옮긴다)
+    cy.nodes('.line-group').forEach(group => {
+        const members = group.children();
+        const left = Math.min(...members.map(m => m.position('x') - m.outerWidth() / 2));
+        members.forEach(m => m.position('x', left + m.outerWidth() / 2));
+        members.ungrabify();
+    });
     // 위치는 C# 이 왼쪽→오른쪽 트리로 계산해 준다(preset). 글자가 읽히는 크기 아래로는 줄이지 않는다.
     cy.fit(undefined, 24);
     if (cy.zoom() < 0.85) {
@@ -60,22 +114,32 @@ export function render(id, elements, rootId, path, dotnet) {
         const p = root.renderedPosition();
         cy.panBy({ x: 40 + root.renderedWidth() / 2 - p.x, y: container.clientHeight / 2 - p.y });
     }
-    cy.on('tap', 'node', ev => dotnet.invokeMethodAsync('OnGraphNodeClick', ev.target.id()));
+    // 묶음 상자 위를 눌렀을 때는 안의 노드 대신 상자 하나만 알린다(겹친 노드 탭이 두 번 가지 않게)
+    cy.on('tap', 'node', ev => {
+        ev.stopPropagation?.();
+        dotnet.invokeMethodAsync('OnGraphNodeClick', ev.target.id());
+    });
+    enableSubtreeDrag(cy);
     container._cy = cy;   // 화면 점검 스크립트(tools/ui-check.mjs)가 노드를 누를 때 쓴다
 
     const onTheme = () => cy.style(styles());
     const media = matchMedia('(prefers-color-scheme: dark)');
     media.addEventListener('change', onTheme);
     graphs.set(id, { cy, media, onTheme });
-    highlight(id, path, false);
+    highlight(id, path, picked, false);
 }
 
-// path: 진입점부터 현재 함수까지의 그래프 노드 id 들
-export function highlight(id, path, center = true) {
+// path: 진입점부터 현재 함수까지의 그래프 노드 id 들, picked: 고른 줄의 묶음 상자 id(없으면 null)
+export function highlight(id, path, picked, center = true) {
     const g = graphs.get(id);
     if (!g) return;
     const cy = g.cy;
-    cy.elements().removeClass('onpath current');
+    cy.elements().removeClass('onpath current picked');
+    if (picked) {
+        const box = cy.getElementById(picked);
+        box.addClass('picked');
+        box.incomers('edge').addClass('onpath');   // 부르는 함수 → 고른 줄 묶음 선도 파랗게
+    }
     const ids = path ?? [];
     for (let i = 0; i < ids.length; i++) {
         const node = cy.getElementById(ids[i]);
