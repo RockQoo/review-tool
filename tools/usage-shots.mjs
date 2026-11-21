@@ -1,5 +1,5 @@
 // 사용법 화면 만들기: 헤드리스 Edge 로 화면을 찍고, 버튼 위치에 번호를 달아 docs/usage/index.html 을 만든다(외부 패키지 없음, Node 22+).
-//   서버가 떠 있을 때: node tools/usage-shots.mjs [url] [진입점 이름] [트리에서 누를 함수] [코드에서 열 줄 글자]
+//   서버가 떠 있을 때: node tools/usage-shots.mjs [url] [진입점 이름] [트리에서 누를 함수] [코드에서 열 줄 글자] [함수 검색어]
 // 사용법은 docs/usage/ 에 모은다(index.html 스크린샷, detail.html 글, img/). 스크린샷에는 대상 소스가 보이므로 img/ 는 커밋하기 전에 확인한다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
@@ -10,6 +10,7 @@ const url = process.argv[2] ?? 'http://127.0.0.1:5057/';
 const ENTRY = process.argv[3] ?? 'C2ZMove';
 const FN = process.argv[4] ?? 'Fanout';
 const LINE = process.argv[5] ?? 'RequestMove';
+const SEARCH = process.argv[6] ?? 'RequestMove';
 const imgDir = 'docs/usage/img';
 mkdirSync(imgDir, { recursive: true });
 const W = 1600, H = 1000;
@@ -87,6 +88,7 @@ await evaluate(`${find('#frame-0 .line.call', LINE)}?.click()`);
 await sleep(500);
 await scene('main', '기본 화면', '진입점 고르기 → 트리에서 함수 → 오른쪽에 코드가 이어 붙음', [
   { sel: 'header button.brand', name: '홈', desc: '대상 추가·비교·보고서 창 닫고 기본 화면으로' },
+  { sel: '.nav-btns', name: '뒤로 / 앞으로', desc: '보던 진입점·경로로 이동 · Alt+←/→ · 새로 고침해도 마지막 위치 복원' },
   { sel: 'header.topbar > select', name: '대상', desc: '분석할 서버 고르기' },
   { sel: 'header button', text: '대상 추가', name: '대상 추가', desc: '새 폴더 등록 · 설정 자동 생성' },
   { sel: 'header button', text: '다시 분석', name: '다시 분석', desc: '고른 대상의 소스를 다시 읽어 호출 트리 새로 만들기 · 코드는 안 고침' },
@@ -96,7 +98,7 @@ await scene('main', '기본 화면', '진입점 고르기 → 트리에서 함�
   { sel: '.meta button', text: '비교', name: '비교', desc: '수정 전후 구조 비교' },
   { sel: '.meta button', text: '보고서', name: '보고서', desc: '공유용 Markdown' },
   { sel: '.meta button.warn', name: '못 본 것', desc: '분석이 놓친 부분' },
-  { sel: '.entries .search', name: '검색', desc: '진입점 이름으로 찾기' },
+  { sel: '.entries .search', name: '검색', desc: '진입점·함수 이름으로 찾기' },
   { sel: '.entries .entry.active', name: '진입점', desc: '패킷 핸들러 · main' },
   { sel: '.tree-tools label', name: '외부 호출', desc: 'std 등 범위 밖 함수 표시' },
   { sel: '.tree-tools button', text: '모두 펼치기', name: '모두 펼치기 / 접기', desc: '트리 전체 열고 닫기' },
@@ -115,7 +117,25 @@ await scene('main', '기본 화면', '진입점 고르기 → 트리에서 함�
   { sel: '#frame-0 .callees', name: '호출 단추', desc: '누르면 한 단계 더 · 파랑 = 따라 들어간 함수' },
   { sel: '#frame-0 .line.next', name: '다음 칸 줄', desc: '파랑 ▶ = 아래 칸으로 이어진 호출' },
   { sel: '#frame-1 .from', name: '부른 곳', desc: '위 칸의 몇 번째 줄에서 불림' },
+  { sel: '#frame-0 .tk-keyword', name: '문법 색칠', desc: '키워드·문자열·주석·숫자 색' },
 ]);
+
+// ---- 함수 검색: 이름으로 찾아 진입점부터 그 함수까지 ----
+await evaluate(`(() => { const i = document.querySelector('.entries .search'); i.value = ${JSON.stringify(SEARCH)}; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await sleep(600);
+await evaluate(`[...document.querySelectorAll('.entries .fn-result')][0]?.click()`);
+await sleep(800);
+await scene('search', '함수 검색', '왼쪽 검색칸에 함수 이름(두 글자 이상)', [
+  { sel: '.entries .search', name: '검색칸', desc: '진입점과 함수 이름을 같이 찾음' },
+  { sel: '.entries .fn-result', name: '함수 결과', desc: '누르면 진입점부터 이 함수까지 코드 스택' },
+  { sel: '.impact', name: '닿는 진입점', desc: '이 함수에 닿는 패킷 목록 · 다른 경로 고르기' },
+  { sel: '.pane.stack .frame:last-of-type .fname', name: '찾은 함수', desc: '코드 스택 맨 아래' },
+]);
+await evaluate(`(() => { document.querySelector('.impact button.close')?.click(); const i = document.querySelector('.entries .search'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await sleep(400);
+await click('.entries .entry', ENTRY);
+await click('.tree .row', FN);
+await waitFor(`document.querySelectorAll('.frame').length >= 2`);
 
 await scene('views', '보기 전환 아이콘', '상단 아이콘 8개', [
   { sel: '.views button[title="트리 보기"]', name: '트리', desc: '호출을 들여쓰기로' },

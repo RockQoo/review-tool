@@ -14,6 +14,10 @@
         <button class="brand icon-btn" title="review-tool 기본 화면으로 (대상 추가·비교·보고서 등 열린 창 닫기)" @onclick="GoHome">
             <span class="ico" style="--icon: url('lib/lucide/house.svg')"></span> 홈
         </button>
+        <span class="nav-btns" role="group" aria-label="보던 흐름 이동">
+            <button title="뒤로: 직전에 보던 진입점·경로 (Alt+←, 마우스 뒤로 단추)" aria-label="뒤로" disabled="@(historyIndex <= 0)" @onclick="() => GoHistory(-1)">←</button>
+            <button title="앞으로 (Alt+→)" aria-label="앞으로" disabled="@(historyIndex >= history.Count - 1)" @onclick="() => GoHistory(1)">→</button>
+        </span>
         <select value="@target" @onchange="OnTargetChanged" disabled="@(Workspace.RunningTarget is not null)">
             @foreach (var t in Workspace.ListTargets())
             {
@@ -247,6 +251,24 @@
                         </button>
                     }
                 }
+                @if (entryFilter.Trim().Length >= 2)
+                {
+                    // 함수 이름 검색: 누르면 그 함수에 닿는 진입점과 경로(영향 목록)를 열고 첫 경로를 코드 스택으로
+                    var found = FoundFunctions();
+                    <div class="group">함수 @(found.Count == MaxFoundFunctions ? $"{MaxFoundFunctions}개+" : $"{found.Count}개")</div>
+                    @foreach (var fn in found)
+                    {
+                        var fid = fn.Id;
+                        <button class="entry fn-result" title="@fn.Name — 누르면 진입점부터 이 함수까지" @onclick="() => OpenFunction(fid)">
+                            <span class="label mono">@ShortName(fn.Name)</span>
+                            <span class="sub">@fn.File:@fn.StartLine</span>
+                        </button>
+                    }
+                    @if (found.Count == 0)
+                    {
+                        <p class="hint-line">이름이 맞는 함수가 없습니다(분석에서 펼친 함수만 찾습니다).</p>
+                    }
+                }
             </nav>
             <div class="splitter v" data-var="--w-entries" title="끌어서 너비 조절 · 두 번 누르면 기본 크기"></div>
 
@@ -413,6 +435,7 @@
                             <div class="code">
                                 @{
                                     var lines = node.Code.Split('\n');
+                                    var colored = CodeColor.Lines(lines, graph.Language);
                                 }
                                 @for (var l = 0; l < lines.Length; l++)
                                 {
@@ -427,7 +450,7 @@
                                          @onclick="() => ToggleLine(frameIndex, lineNo, hasCalls)"
                                          @onkeydown="e => OnLineKey(e, frameIndex, lineNo, hasCalls)">
                                         <span class="ln" title="편집기에서 이 줄 열기" @onclick="() => OpenInEditor(node.File, lineNo)"
-                                              @onclick:stopPropagation="true">@lineNo</span><span class="src">@lines[l]</span>
+                                              @onclick:stopPropagation="true">@lineNo</span><span class="src">@ColoredLine(colored[l])</span>
                                     </div>
                                     @if (isOpen && lineCalls is not null)
                                     {
@@ -648,6 +671,7 @@
         {
             graphModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/graph.js");
             selfRef = DotNetObjectReference.Create(this);
+            await graphModule.InvokeVoidAsync("listenHistoryKeys", selfRef);
             var savedEditor = await graphModule.InvokeAsync<string?>("getPref", "editor");
             editorId = Editors.Available.Any(e => e.Id == savedEditor) ? savedEditor! : Editors.Available.FirstOrDefault()?.Id ?? "";
             var saved = await graphModule.InvokeAsync<string?>("getPref", "viewMode");
@@ -662,6 +686,8 @@
         {
             return;
         }
+
+        await TrackNavigationAsync();
 
         // 줄을 골랐으면(노드 보기 묶음·트리 묶음 머리) 코드 칸을 그 줄로 스크롤
         if (pendingScroll)
@@ -748,6 +774,14 @@
     }
 
     private bool pendingScroll;
+
+    private void OnGroupHeadKey(KeyboardEventArgs e, List<string> path, int line)
+    {
+        if (e.Key is "Enter" or " ")
+        {
+            SelectLineAt(path, line);
+        }
+    }
 
     private bool splitsApplied;
 
@@ -1040,17 +1074,7 @@
         if (selectedEntry is not null && graph?.EntryPoints.FirstOrDefault(e => e.NodeId == selectedEntry.NodeId) is { } same)
         {
             selectedEntry = same;
-            // 새 결과에서도 이어지는 앞부분까지만 남긴다(사라진 함수·끊긴 호출 뒤는 버림)
-            var kept = new List<string>();
-            foreach (var id in stack)
-            {
-                if (!graph.Nodes.ContainsKey(id) || (kept.Count == 0 ? id != same.NodeId : !index!.ChildrenOf(kept[^1]).Any(e => e.To == id)))
-                {
-                    break;
-                }
-                kept.Add(id);
-            }
-            stack = kept.Count > 0 ? kept : [same.NodeId];
+            stack = ValidPrefix(same, stack);
             openLine = null;
             flagged.Clear();
         }
@@ -1073,8 +1097,131 @@
     {
         target = e.Value?.ToString();
         selectedEntry = null;
+        history.Clear();
+        historyIndex = -1;
+        lastNavKey = null;
         Load();
     }
+
+    // 지금 결과에서도 진입점부터 이어지는 앞부분까지만 남긴다(사라진 함수·끊긴 호출 뒤는 버림)
+    private List<string> ValidPrefix(EntryPoint entry, IEnumerable<string> ids)
+    {
+        var kept = new List<string>();
+        foreach (var id in ids)
+        {
+            if (!graph!.Nodes.ContainsKey(id) || (kept.Count == 0 ? id != entry.NodeId : !index!.ChildrenOf(kept[^1]).Any(e => e.To == id)))
+            {
+                break;
+            }
+            kept.Add(id);
+        }
+        return kept.Count > 0 ? kept : [entry.NodeId];
+    }
+
+    // ---- 뒤로/앞으로, 읽던 위치 ----
+
+    private readonly List<(string EntryId, List<string> Stack)> history = [];
+    private int historyIndex = -1;
+    private bool applyingHistory;
+    private string? lastNavKey;
+    private string? restoredFor;
+
+    private string? NavKey() => selectedEntry is null ? null : selectedEntry.NodeId + "|" + string.Join(">", stack);
+
+    // 그린 뒤에 위치가 바뀌었으면 기록하고 브라우저에 저장한다(어느 동작으로 바뀌었든 한곳에서)
+    private async Task TrackNavigationAsync()
+    {
+        if (graph is null || index is null || target is null || adding || graphModule is null)
+        {
+            return;
+        }
+        if (selectedEntry is null && restoredFor != target)
+        {
+            restoredFor = target;
+            var saved = await graphModule.InvokeAsync<string?>("getPref", "pos:" + target);
+            if (saved is not null && RestorePosition(saved))
+            {
+                StateHasChanged();
+                return;
+            }
+        }
+        var key = NavKey();
+        if (key is null || key == lastNavKey)
+        {
+            applyingHistory = false;
+            return;
+        }
+        lastNavKey = key;
+        if (!applyingHistory)
+        {
+            if (historyIndex < history.Count - 1)
+            {
+                history.RemoveRange(historyIndex + 1, history.Count - historyIndex - 1);
+            }
+            history.Add((selectedEntry!.NodeId, [.. stack]));
+            if (history.Count > 50)
+            {
+                history.RemoveAt(0);
+            }
+            historyIndex = history.Count - 1;
+            StateHasChanged();   // 뒤로/앞으로 단추 상태
+        }
+        applyingHistory = false;
+        await graphModule.InvokeVoidAsync("setPref", "pos:" + target,
+            System.Text.Json.JsonSerializer.Serialize(new SavedPosition(selectedEntry!.NodeId, stack)));
+    }
+
+    private sealed record SavedPosition(string E, List<string> S);
+
+    private bool RestorePosition(string json)
+    {
+        try
+        {
+            var saved = System.Text.Json.JsonSerializer.Deserialize<SavedPosition>(json);
+            var entry = graph!.EntryPoints.FirstOrDefault(e => e.NodeId == saved?.E);
+            if (entry is null || saved is null)
+            {
+                return false;
+            }
+            selectedEntry = entry;
+            expanded.Clear();
+            SelectPath(ValidPrefix(entry, saved.S ?? []));
+            return true;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
+    }
+
+    private void GoHistory(int delta)
+    {
+        var i = historyIndex + delta;
+        if (graph is null || i < 0 || i >= history.Count)
+        {
+            return;
+        }
+        var (entryId, saved) = history[i];
+        var entry = graph.EntryPoints.FirstOrDefault(e => e.NodeId == entryId);
+        if (entry is null)
+        {
+            return;
+        }
+        historyIndex = i;
+        applyingHistory = true;
+        selectedEntry = entry;
+        expanded.Clear();
+        impact = null;
+        flagged.Clear();
+        SelectPath(ValidPrefix(entry, saved));
+    }
+
+    [JSInvokable]
+    public Task OnHistoryKey(int delta) => InvokeAsync(() =>
+    {
+        GoHistory(delta);
+        StateHasChanged();
+    });
 
     private bool adding;
 
@@ -1239,6 +1386,37 @@
             || graph.Nodes[e.NodeId].Name.Contains(q, StringComparison.OrdinalIgnoreCase));
     }
 
+    // ---- 함수 검색 ----
+
+    private const int MaxFoundFunctions = 20;
+
+    private IReadOnlyList<TraceNode> FoundFunctions() =>
+        TraceQueries.FindFunctions(graph!, entryFilter.Trim(), MaxFoundFunctions).Where(n => n.Kind != NodeKind.External).ToList();
+
+    // 함수를 고르면: 닿는 진입점 목록(영향)을 열고, 지금 고른 진입점에서 닿으면 그 경로, 아니면 첫 진입점의 경로를 코드 스택으로
+    private void OpenFunction(string id)
+    {
+        if (graph is null)
+        {
+            return;
+        }
+        ShowImpact(id);
+        var hits = impact?.Entries ?? [];
+        var hit = hits.FirstOrDefault(h => h.Entry.NodeId == selectedEntry?.NodeId) ?? hits.FirstOrDefault();
+        if (hit is not null)
+        {
+            OpenImpactPath(hit);
+            notice = hits.Count > 1 ? $"{ShortName(graph.Nodes[id].Name)}: 닿는 진입점 {hits.Count}곳 — 오른쪽 목록에서 다른 경로를 고를 수 있습니다" : null;
+        }
+        else
+        {
+            // 닿는 진입점이 없으면 함수 코드만 보여 준다
+            stack = [id];
+            openLine = null;
+            notice = $"{ShortName(graph.Nodes[id].Name)}: 분석 안에서 이 함수에 닿는 진입점을 찾지 못했습니다";
+        }
+    }
+
     private void SelectEntry(EntryPoint e)
     {
         selectedEntry = e;
@@ -1313,7 +1491,8 @@
                             @* 한 문장에서 이어 부른 호출은 한 덩어리로 *@
                             <div class="line-group">
                                 <div class="line-group-head" title="이 줄 한 문장에서 부르는 함수 @(group.Count)개 · 누르면 코드에서 이 줄"
-                                     @onclick="() => SelectLineAt(path, ln)">
+                                     tabindex="0" role="button" @onclick="() => SelectLineAt(path, ln)"
+                                     @onkeydown="e => OnGroupHeadKey(e, path, ln)">
                                     @(ln)줄 <span class="mono">@LineText(node, ln)</span>
                                 </div>
                                 @foreach (var c in group)
@@ -1482,6 +1661,22 @@
     // ---- 표시 ----
 
     private static string ShortName(string name) => TraceQueries.ShortName(name);
+
+    // 색칠한 코드 한 줄(글자는 그대로, 종류마다 span)
+    private static RenderFragment ColoredLine(List<CodeColor.Token> tokens) => __builder =>
+    {
+        foreach (var t in tokens)
+        {
+            if (t.Kind == CodeColor.Kind.Plain)
+            {
+                @t.Text
+            }
+            else
+            {
+                <span class="tk-@(t.Kind.ToString().ToLowerInvariant())">@t.Text</span>
+            }
+        }
+    };
 
     // 함수 본문의 한 줄(앞뒤 공백 빼고, 길면 줄임)
     private static string LineText(TraceNode node, int line)

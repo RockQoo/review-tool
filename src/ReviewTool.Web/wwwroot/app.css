@@ -9,6 +9,12 @@
     --call: #fff6d6;
     --next: #ffe08a;
     --sel: #d3e3ff;
+    /* 코드 색칠 */
+    --tk-keyword: #0b57d0;
+    --tk-string: #a31515;
+    --tk-comment: #6a8759;
+    --tk-number: #098658;
+    --tk-preprocessor: #8f3f97;
     --warn: #b35900;
     --ext: #8a8f98;
     --code-bg: #fbfbfc;
@@ -27,6 +33,11 @@
         --call: #3a3420;
         --next: #5c4a12;
         --sel: #1e3a6b;
+        --tk-keyword: #6cb6ff;
+        --tk-string: #e5a07b;
+        --tk-comment: #7f9f73;
+        --tk-number: #b5cea8;
+        --tk-preprocessor: #d2a8ff;
         --warn: #ffb066;
         --ext: #6c727c;
         --code-bg: #1a1c21;
@@ -131,6 +142,10 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .topbar button.brand { border: none; background: none; padding: 0; margin-right: 6px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; }
 .topbar button.brand:hover { color: var(--accent); }
 .empty .back { display: inline-block; margin-bottom: 12px; padding: 0; }
+.nav-btns { display: inline-flex; }
+.nav-btns button { padding: 2px 8px; border-radius: 0; }
+.nav-btns button:first-child { border-radius: 4px 0 0 4px; }
+.nav-btns button + button { border-left: none; border-radius: 0 4px 4px 0; }
 
 /* 보기 방식 아이콘 (Lucide SVG 를 마스크로 써서 글자색을 따른다) */
 .views { display: inline-flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
@@ -253,6 +268,7 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .line-group { margin: 2px 0 2px 4px; border: 1px dashed var(--border); border-radius: 4px; background: color-mix(in srgb, var(--accent-soft) 35%, transparent); }
 .line-group-head { font-size: 11px; color: var(--muted); padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .line-group-head:hover { color: var(--accent); text-decoration: underline; }
+.line-group-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .row {
     display: flex;
@@ -335,6 +351,11 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .line { display: flex; white-space: pre; line-height: 1.5; }
 .line .ln { width: 52px; flex: none; text-align: right; padding-right: 12px; color: var(--muted); user-select: none; }
 .line .src { flex: 1; padding-right: 12px; }
+.tk-keyword { color: var(--tk-keyword); }
+.tk-string { color: var(--tk-string); }
+.tk-comment { color: var(--tk-comment); font-style: italic; }
+.tk-number { color: var(--tk-number); }
+.tk-preprocessor { color: var(--tk-preprocessor); }
 .line.call { background: var(--call); cursor: pointer; }
 .line.call:hover .src { text-decoration: underline dotted; }
 /* 아래 칸으로 이어지는 줄: 파랑(노드 보기의 고른 상자와 같은 색) + ▶ + 왼쪽 막대 */

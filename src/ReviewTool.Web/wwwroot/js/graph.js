@@ -58,31 +58,63 @@ function enableSubtreeDrag(cy) {
         const tp = n.data('tp');
         if (tp) (kids.get(tp) ?? kids.set(tp, []).get(tp)).push(n.id());
     });
-    let moving = [];
+    // 여러 노드를 함께 끌 때(선택 후 끌기)는 grab 이 노드마다 온다. 잡힌 노드 전부의 하위를 모으고,
+    // 이동량은 처음 잡은 노드(anchor) 하나로만 계산해 한 번씩만 옮긴다.
+    let moving = cy.collection();
+    let anchor = null;
     let last = null;
-    cy.on('grab', 'node', ev => {
-        const start = ev.target;
-        const roots = start.isParent() ? start.children().map(c => c.id()) : [start.id()];
-        const seen = new Set(roots);
-        const queue = [...roots];
+    const rebuild = () => {
+        const grabbed = cy.nodes(':grabbed');
+        const roots = grabbed.union(grabbed.filter(n => n.isParent()).children());   // Cytoscape 가 직접 옮기는 것
+        const rootIds = new Set(roots.map(n => n.id()));
+        const seen = new Set(rootIds);
+        const queue = [...rootIds];
         while (queue.length) {
             for (const k of kids.get(queue.shift()) ?? []) {
                 if (!seen.has(k)) { seen.add(k); queue.push(k); }
             }
         }
-        // 잡은 것(과 묶음이면 안의 노드)은 Cytoscape 가 옮긴다
-        roots.forEach(r => seen.delete(r));
-        moving = [...seen].map(k => cy.getElementById(k)).filter(n => !n.isParent());
-        last = { ...start.position() };
+        moving = cy.collection([...seen].filter(k => !rootIds.has(k)).map(k => cy.getElementById(k)).filter(n => !n.isParent()));
+    };
+    cy.on('grab', 'node', ev => {
+        if (!anchor) {
+            anchor = ev.target;
+            last = { ...anchor.position() };
+        }
+        rebuild();
     });
     cy.on('drag', 'node', ev => {
-        if (!last) return;
-        const p = ev.target.position();
+        if (ev.target !== anchor || !last) return;
+        const p = anchor.position();
         const d = { x: p.x - last.x, y: p.y - last.y };
         last = { ...p };
-        moving.forEach(n => n.shift(d));
+        cy.batch(() => moving.shift(d));
     });
-    cy.on('free', 'node', () => { moving = []; last = null; });
+    cy.on('free', 'node', () => {
+        if (cy.nodes(':grabbed').empty()) {
+            moving = cy.collection();
+            anchor = null;
+            last = null;
+        }
+    });
+}
+
+// 뒤로/앞으로: Alt+←/→, 마우스 뒤로·앞으로 단추. 입력칸에서 친 Alt+← 은 건드리지 않는다.
+let historyListening = false;
+export function listenHistoryKeys(dotnet) {
+    if (historyListening) return;
+    historyListening = true;
+    document.addEventListener('keydown', e => {
+        if (!e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+        if (e.target.closest?.('input, textarea, select')) return;
+        e.preventDefault();
+        dotnet.invokeMethodAsync('OnHistoryKey', e.key === 'ArrowLeft' ? -1 : 1);
+    });
+    document.addEventListener('mouseup', e => {
+        if (e.button !== 3 && e.button !== 4) return;
+        e.preventDefault();
+        dotnet.invokeMethodAsync('OnHistoryKey', e.button === 3 ? -1 : 1);
+    });
 }
 
 export function scrollToSelector(selector) {
