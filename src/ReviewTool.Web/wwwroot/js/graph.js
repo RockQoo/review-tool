@@ -100,21 +100,30 @@ function enableSubtreeDrag(cy) {
 }
 
 // 뒤로/앞으로: Alt+←/→, 마우스 뒤로·앞으로 단추. 입력칸에서 친 Alt+← 은 건드리지 않는다.
+// 리스너는 문서에 한 번만 걸고, 부를 대상(화면 인스턴스)은 매번 바꿔 끼운다(다시 연결·새 화면이면 새 참조, 닫히면 null).
 let historyListening = false;
+let historyTarget = null;
 export function listenHistoryKeys(dotnet) {
+    historyTarget = dotnet;
     if (historyListening) return;
     historyListening = true;
+    const go = delta => historyTarget?.invokeMethodAsync('OnHistoryKey', delta).catch(() => { });
     document.addEventListener('keydown', e => {
-        if (!e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+        if (!historyTarget || !e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
         if (e.target.closest?.('input, textarea, select')) return;
         e.preventDefault();
-        dotnet.invokeMethodAsync('OnHistoryKey', e.key === 'ArrowLeft' ? -1 : 1);
+        go(e.key === 'ArrowLeft' ? -1 : 1);
     });
     document.addEventListener('mouseup', e => {
-        if (e.button !== 3 && e.button !== 4) return;
+        if (!historyTarget || (e.button !== 3 && e.button !== 4)) return;
         e.preventDefault();
-        dotnet.invokeMethodAsync('OnHistoryKey', e.button === 3 ? -1 : 1);
+        go(e.button === 3 ? -1 : 1);
     });
+}
+
+// 화면(Home)은 한 페이지에 하나라 닫힐 때 비운다. 새 화면이 뜨면 listenHistoryKeys 가 다시 채운다.
+export function stopHistoryKeys() {
+    historyTarget = null;
 }
 
 export function scrollToSelector(selector) {

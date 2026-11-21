@@ -156,6 +156,34 @@ public sealed class TraceWorkspace(IConfiguration configuration, IWebHostEnviron
     public SnapshotStore.Snapshot? SaveBaseline(string name) =>
         Get(name) is { } loaded ? SnapshotStore.SaveBaseline(new WorkPaths(DataDirectory, name), loaded.Graph) : null;
 
+    // 검토 기록(확인·보류·메모). 탭이 여러 개여도 같은 파일을 쓰므로 저장은 잠그고, 읽을 때는 파일에서 새로 읽는다.
+    public ReviewLog LoadReview(string name)
+    {
+        lock (reviewLock_)
+        {
+            return ReviewLog.Load(ReviewLog.PathOf(new WorkPaths(DataDirectory, name)));
+        }
+    }
+
+    // 표시 하나를 바꿔 저장한다. 다른 탭이 그사이 남긴 표시를 덮지 않게 파일에서 읽어 고친 뒤 쓴다.
+    public ReviewLog UpdateReview(string name, Action<ReviewLog> change)
+    {
+        lock (reviewLock_)
+        {
+            var path = ReviewLog.PathOf(new WorkPaths(DataDirectory, name));
+            var log = ReviewLog.Load(path);
+            change(log);
+            log.Save(path);
+            return log;
+        }
+    }
+
+    private readonly object reviewLock_ = new();
+
+    // 비교 기준 결과(코드 포함). 코드 칸의 "바뀐 줄 보기"와 지워진 함수 보기에 쓴다.
+    public TraceGraph? LoadSnapshot(string name, string snapshotId) =>
+        SnapshotStore.Load(new WorkPaths(DataDirectory, name), snapshotId);
+
     public SnapshotComparer.CompareResult? Compare(string name, string snapshotId)
     {
         var current = Get(name);

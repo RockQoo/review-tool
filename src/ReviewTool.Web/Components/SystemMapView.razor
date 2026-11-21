@@ -308,7 +308,8 @@
         }
         if (showCalls)
         {
-            var nameToId = idOf.ToDictionary(kv => kv.Key.Name, kv => kv.Value);
+            // 다른 프로젝트에 같은 이름 클래스가 있으면 처음 것으로(예외로 화면이 멈추지 않게)
+            var nameToId = idOf.GroupBy(kv => kv.Key.Name).ToDictionary(g => g.Key, g => g.First().Value);
             foreach (var l in SystemMap.Build(Graph, Index).Links.Where(l => l.Kind != "packet"))
             {
                 if (nameToId.TryGetValue(l.From, out var a) && nameToId.TryGetValue(l.To, out var b))

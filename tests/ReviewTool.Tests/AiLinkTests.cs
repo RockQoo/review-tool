@@ -272,7 +272,7 @@ public class AiLinkTests
 
         var tools = f.Rpc("tools/list")["result"]!["tools"]!.AsArray().Select(t => t!["name"]!.GetValue<string>()).ToList();
         Assert.Equal(["list_targets", "get_entrypoints", "find_functions", "get_flow", "get_source", "get_flow_context", "get_impact", "compare",
-                      "get_journey", "get_flow_summary", "get_system_map", "get_class", "get_checks"], tools);
+                      "get_journey", "get_flow_summary", "get_system_map", "get_class", "get_checks", "get_review"], tools);
 
         Assert.Equal(-32601, f.Rpc("nope")["error"]!["code"]!.GetValue<int>());
         Assert.Equal(-32700, f.Server.Handle("not json")!["error"]!["code"]!.GetValue<int>());
@@ -403,5 +403,23 @@ public class AiLinkTests
         var bad = f.CallTool("get_checks", new JsonObject { ["target"] = "t", ["rule"] = "없는 규칙" });
         Assert.True(bad.IsError);
         Assert.Contains("있는 규칙: 락 안에서 I/O", bad.Text);
+    }
+
+    [Fact]
+    public void MCP_검토_기록은_표시와_남은_함수를_보여_준다()
+    {
+        using var f = new McpFixture();
+        Assert.Contains("표시한 함수가 없습니다", f.CallTool("get_review", new JsonObject { ["target"] = "t" }).Text);
+
+        var g = Sample();
+        var log = new ReviewLog();
+        log.Set(g.Nodes["A@1"], ReviewLog.Mark.Checked, "Enter 확인");
+        log.Save(ReviewLog.PathOf(new WorkPaths(Path.Combine(f.Root, "data"), "t")));
+
+        var text = f.CallTool("get_review", new JsonObject { ["target"] = "t", ["entry"] = "C2SLogin" }).Text;
+        Assert.Contains("- [확인] `World::Enter` src/World.cpp:20 — Enter 확인", text);
+        Assert.Contains(": 확인 1/3", text);                                    // E, A, B (외부 std::x 는 세지 않음)
+        Assert.Contains("- 남음: `Handler::OnLogin`", text);
+        Assert.DoesNotContain("- 남음: `World::Enter`", text);
     }
 }

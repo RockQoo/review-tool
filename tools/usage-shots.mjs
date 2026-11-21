@@ -118,6 +118,7 @@ await scene('main', '기본 화면', '진입점 고르기 → 트리에서 함�
   { sel: '#frame-0 .line.next', name: '다음 칸 줄', desc: '파랑 ▶ = 아래 칸으로 이어진 호출' },
   { sel: '#frame-1 .from', name: '부른 곳', desc: '위 칸의 몇 번째 줄에서 불림' },
   { sel: '#frame-0 .tk-keyword', name: '문법 색칠', desc: '키워드·문자열·주석·숫자 색' },
+  { sel: '#frame-0 .review-row', name: '검토 표시', desc: '✓ 확인 · 보류 · 메모 → 진입점 옆 진행률, 본문이 바뀌면 "다시 봐야 함"' },
 ]);
 
 // ---- 함수 검색: 이름으로 찾아 진입점부터 그 함수까지 ----
@@ -161,9 +162,13 @@ await click('.impact button', '닫기');
 
 await click('.meta button', '비교');
 await waitFor(`!!document.querySelector('.compare')`);
+await evaluate(`[...document.querySelectorAll('.git-changes button')].find(b => b.textContent.includes('git 변경'))?.click()`);
+await waitFor(`!document.querySelector('.git-changes button')?.disabled && (document.querySelector('.git-changes')?.textContent.includes('바뀐 곳') || !!document.querySelector('.git-changes .warn-line'))`, 30000);
 await scene('compare', '비교', '상단 "비교"', [
   { sel: '.compare button', text: '기준으로 저장', name: '기준 저장', desc: 'AI 수정 전에 누르기' },
-  { sel: '.compare', name: '비교 결과', desc: '진입점·함수·호출 추가/삭제/변경' },
+  { sel: '.compare select', name: '기준 고르기', desc: '직전 분석 · 저장한 기준' },
+  { sel: '.compare', name: '비교 결과', desc: '진입점·함수·호출 추가/삭제/변경 · 바뀐 함수는 코드 칸에 "바뀐 줄 보기"(빨강/초록) · 지워진 함수는 기준 코드로' },
+  { sel: '.git-changes', name: 'git 변경', desc: '작업 폴더 vs 마지막 커밋: 바뀐 줄이 걸린 함수 · 어떤 흐름에도 안 걸린 변경' },
   { sel: '.compare button', text: '닫기', name: '닫기', desc: '' },
 ]);
 await click('.compare button', '닫기');

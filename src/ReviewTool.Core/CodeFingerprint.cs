@@ -12,11 +12,14 @@ public static partial class CodeFingerprint
     public static string Body(string code) => Freshness.HashText(Normalize(code));
 
     // 본문 '{' 앞까지(반환형·이름·매개변수·const 등). 공백을 하나로.
+    // C# 식 본문(int X() => a + b;)은 '{' 가 없으므로 '=>' 앞까지 — 본문이 시그니처에 섞이면 본문만 고쳐도 다른 함수로 보인다.
     public static string Signature(string code)
     {
         var text = Normalize(code, keepSingleSpaces: true);
         var brace = IndexOutsideLiterals(text, '{');
-        return (brace >= 0 ? text[..brace] : text).Trim();
+        var arrow = IndexOutsideLiterals(text, '=', next: '>');
+        var end = brace < 0 ? arrow : arrow < 0 ? brace : Math.Min(brace, arrow);
+        return (end >= 0 ? text[..end] : text).Trim();
     }
 
     // 주석 제거, 리터럴 밖 공백 정리. 식별자 사이 공백은 토큰 경계라 하나 남긴다("return x" ≠ "returnx").
@@ -35,7 +38,8 @@ public static partial class CodeFingerprint
 
     private static bool IsWord(char c) => char.IsLetterOrDigit(c) || c == '_';
 
-    private static int IndexOutsideLiterals(string text, char target)
+    // next 가 있으면 target 바로 뒤가 next 인 곳(두 글자 토큰, 예: "=>")
+    private static int IndexOutsideLiterals(string text, char target, char next = '\0')
     {
         var quote = '\0';
         for (var i = 0; i < text.Length; i++)
@@ -56,7 +60,7 @@ public static partial class CodeFingerprint
             {
                 quote = c;
             }
-            else if (c == target)
+            else if (c == target && (next == '\0' || (i + 1 < text.Length && text[i + 1] == next)))
             {
                 return i;
             }

@@ -95,6 +95,9 @@ ol.steps > li { margin-bottom: 6px; }
 <p>노드 그래프나 흐름도처럼 그림이 큰 보기에서는 그림이 위, 코드가 아래로 배치됩니다.</p>
 <ul>
   <li><b>칸 크기</b>: 칸 사이 경계선을 끌면 너비(위아래 배치에서는 높이)가 바뀝니다. 두 번 누르면 기본 크기로 돌아가고, 바꾼 크기는 브라우저가 기억합니다.</li>
+  <li><b>바뀐 줄 보기</b>: 비교 기준(직전 분석이나 저장한 기준)과 본문이 다른 함수는 칸 제목 줄에 <span class="btn">바뀐 줄 보기</span>가 생깁니다. 누르면 지운 줄은 빨강, 더한 줄은 초록으로 보입니다. 비교 패널의 "함수 삭제"를 누르면 지워진 함수를 기준 코드로 볼 수 있습니다.</li>
+  <li><b>검토 표시</b>: 함수 칸 아래 <span class="btn">✓ 확인</span> <span class="btn">보류</span>와 메모. 진입점 옆에 "확인/닿는 함수" 진행률이 붙고, 확인한 뒤 본문이 바뀌면 "다시 봐야 함"이 됩니다. 기록은 <code>data\&lt;대상&gt;\review.json</code>에 남습니다.</li>
+  <li><b>git 변경</b>: 비교 패널의 <span class="btn">git 변경 보기</span>는 작업 폴더와 마지막 커밋을 비교해, 바뀐 줄이 걸린 함수와 <b>어떤 흐름에도 안 걸린 변경</b>(등록 코드·헤더·설정 등)을 보여 줍니다. git은 읽기만 합니다.</li>
   <li><b>함수 검색</b>: 왼쪽 검색칸에 함수 이름을 두 글자 이상 치면 진입점 아래에 "함수" 결과가 나옵니다. 누르면 그 함수에 닿는 진입점 목록이 열리고, 진입점부터 그 함수까지의 코드가 코드 스택에 쌓입니다.</li>
   <li><b>뒤로/앞으로</b>: 상단 <span class="btn">←</span> <span class="btn">→</span>(또는 <code>Alt+←/→</code>, 마우스 뒤로 단추)로 직전에 보던 진입점·경로로 돌아갑니다. 새로 고침해도 마지막에 보던 위치가 다시 열립니다.</li>
   <li><b>문법 색칠</b>: 코드 스택의 키워드·문자열·주석·숫자에 색이 붙습니다. 눈으로 읽기 위한 것이라 매크로가 많은 줄은 틀릴 수 있지만 코드 글자는 그대로입니다.</li>
@@ -197,7 +200,7 @@ ol.steps > li { margin-bottom: 6px; }
 <pre>dotnet build ReviewTool.slnx
 claude mcp add review-tool -- dotnet D:\Work\RockQ\Projects\review-tool\src\ReviewTool.Cli\bin\Debug\net10.0\ReviewTool.Cli.dll mcp
 codex  mcp add review-tool -- dotnet D:\Work\RockQ\Projects\review-tool\src\ReviewTool.Cli\bin\Debug\net10.0\ReviewTool.Cli.dll mcp</pre>
-<p>그다음 AI에게 이렇게 물으면 됩니다: "review-tool로 C2SLogin 흐름 보고, 락 안에서 DB 부르는 곳 있는지 봐 줘." MCP 도구는 13개(진입점, 흐름, 코드, 영향, 비교, 여정, 요약, 흐름도, 클래스, 점검 등)이며, 저장된 결과를 읽기만 합니다.</p>
+<p>그다음 AI에게 이렇게 물으면 됩니다: "review-tool로 C2SLogin 흐름 보고, 락 안에서 DB 부르는 곳 있는지 봐 줘." MCP 도구는 14개(진입점, 흐름, 코드, 영향, 비교, 여정, 요약, 흐름도, 클래스, 점검, 검토 기록 등)이며, 저장된 결과를 읽기만 합니다.</p>
 
 <h2 id="cli">11. 명령줄</h2>
 <p>모두 <code>dotnet run --project src/ReviewTool.Cli -- &lt;명령&gt;</code>으로 실행합니다.</p>

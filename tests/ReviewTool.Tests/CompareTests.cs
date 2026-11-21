@@ -13,6 +13,10 @@ public class CompareTests
         Assert.Equal(CodeFingerprint.Body(a), CodeFingerprint.Body(b));
         Assert.NotEqual(CodeFingerprint.Body(a), CodeFingerprint.Body("void A::Run(int x)\n{\n    Stop(x);\n}"));
         Assert.Equal("void A::Run(int x)", CodeFingerprint.Signature(a));
+        // C# 식 본문: 본문은 시그니처에 넣지 않는다(본문만 고쳐도 같은 함수로 이어지게). 문자열 안 => 는 무시
+        Assert.Equal("int Sum(int a, int b)", CodeFingerprint.Signature("int Sum(int a, int b) => a + b;"));
+        Assert.Equal("string Tag(string s = \"=>\")", CodeFingerprint.Signature("string Tag(string s = \"=>\") => s;"));
+        Assert.Equal("void Go()", CodeFingerprint.Signature("void Go() { var f = () => 1; }"));
     }
 
     [Fact]

@@ -62,6 +62,10 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
             Schema(("target", "string", "대상 이름", true), ("rule", "string", "이 규칙 이름만(선택)", false),
                    ("entry", "string", "이 진입점 경로에 걸친 지적만(선택). 표시 이름·함수 id·함수 이름", false)),
             a => ChecksText(Req(a, "target"), Target(a), Opt(a, "rule"), Opt(a, "entry"))),
+        new("get_review", "사람의 검토 기록: 함수마다 확인·보류·메모와, 표시 뒤 본문이 바뀌어 다시 봐야 하는 함수. " +
+                          "entry 를 주면 그 진입점에서 닿는 함수 중 아직 확인하지 않은 것(검토 남은 곳)을 보여 준다.",
+            Schema(("target", "string", "대상 이름", true), ("entry", "string", "진입점 표시 이름·함수 id·함수 이름(선택)", false)),
+            a => ReviewText(Req(a, "target"), Target(a), Opt(a, "entry"))),
     ];
 
     private IReadOnlyList<Tool>? tools_;
@@ -472,6 +476,51 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
     }
 
     // 읽기만 하므로 폴더를 만들지 않는다
+    private string ReviewText(string name, (TraceGraph G, TraceIndex I) t, string? entry)
+    {
+        var log = ReviewLog.Load(ReviewLog.PathOf(Paths(LoadConfig(name))));
+        var sb = new StringBuilder("# 검토 기록: ").Append(name).Append("\n\n");
+        var marked = t.G.Nodes.Values.Where(n => log.StateOf(n) != ReviewLog.State.None).OrderBy(n => n.Name, StringComparer.Ordinal).ToList();
+        if (marked.Count == 0)
+        {
+            sb.Append("- 표시한 함수가 없습니다(화면의 코드 칸에서 \"확인\"·\"보류\").\n");
+        }
+        foreach (var n in marked)
+        {
+            var state = log.StateOf(n) switch
+            {
+                ReviewLog.State.Checked => "확인",
+                ReviewLog.State.Hold => "보류",
+                _ => "다시 봐야 함(표시 뒤 본문이 바뀜)",
+            };
+            var note = log.Find(n)?.Note ?? "";
+            sb.Append("- [").Append(state).Append("] `").Append(n.Name).Append("` ").Append(n.File).Append(':').Append(n.StartLine)
+              .Append(note.Length > 0 ? " — " + note : "").Append('\n');
+        }
+        if (entry is not null)
+        {
+            var e = ResolveEntry(t.G, entry);
+            var (done, total) = log.Progress(t.G, t.I, e.Id);
+            sb.Append("\n## ").Append(EntryTitle(t.G, e)).Append(": 확인 ").Append(done).Append('/').Append(total).Append("\n\n");
+            var seen = new HashSet<string> { e.Id };
+            var queue = new Queue<string>(seen);
+            while (queue.Count > 0)
+            {
+                var id = queue.Dequeue();
+                if (t.G.Nodes.TryGetValue(id, out var n) && n.Kind != NodeKind.External && log.StateOf(n) != ReviewLog.State.Checked)
+                {
+                    sb.Append("- 남음: `").Append(n.Name).Append("` ").Append(n.File).Append(':').Append(n.StartLine).Append('\n');
+                }
+                foreach (var c in t.I.ChildrenOf(id).Where(c => seen.Add(c.To)))
+                {
+                    queue.Enqueue(c.To);
+                }
+            }
+        }
+        sb.Append("\n사람이 남긴 표시다. \"확인\"은 그 사람이 읽었다는 뜻이지 문제없다는 증명이 아니다.\n");
+        return sb.ToString();
+    }
+
     private WorkPaths Paths(TargetConfig config) => new(dataRoot, config.Name, create: false);
 
     private (TraceGraph Graph, TraceIndex Index)? TryGraph(string name)

@@ -9,6 +9,8 @@
     --call: #fff6d6;
     --next: #ffe08a;
     --sel: #d3e3ff;
+    --add: #e6f4ea;
+    --del: #fce8e6;
     /* 코드 색칠 */
     --tk-keyword: #0b57d0;
     --tk-string: #a31515;
@@ -33,6 +35,8 @@
         --call: #3a3420;
         --next: #5c4a12;
         --sel: #1e3a6b;
+        --add: #1d3a26;
+        --del: #47201d;
         --tk-keyword: #6cb6ff;
         --tk-string: #e5a07b;
         --tk-comment: #7f9f73;
@@ -351,6 +355,27 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .line { display: flex; white-space: pre; line-height: 1.5; }
 .line .ln { width: 52px; flex: none; text-align: right; padding-right: 12px; color: var(--muted); user-select: none; }
 .line .src { flex: 1; padding-right: 12px; }
+/* 검토 기록 */
+.review-row { display: flex; align-items: center; gap: 6px; padding: 3px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.review-row .rv { padding: 0 8px; font-size: 12px; }
+.review-row .rv.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.review-row .rv.hold.on { background: var(--warn); border-color: var(--warn); color: #fff; }
+.review-row .rv-note { flex: 1; min-width: 120px; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
+.review-row .hint-line { color: var(--muted); }
+.entries .entry .progress { float: right; font-size: 11px; color: var(--accent); font-family: var(--mono); }
+.entries .entry.active .progress { color: inherit; }
+.review-summary { font-weight: 600; }
+.git-changes { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.git-changes ul { margin: 2px 0 6px; padding-left: 18px; }
+.git-changes .hint-line { color: var(--muted); }
+
+/* 전후 비교(바뀐 줄 보기) */
+.code.diff .note { margin: 0 0 4px; }
+.line.diff-added { background: var(--add); }
+.line.diff-removed { background: var(--del); }
+.line .ln.old { width: 40px; opacity: .55; }
+.diff-toggle.on { font-weight: 700; }
+.frame.removed { border-color: var(--warn); }
 .tk-keyword { color: var(--tk-keyword); }
 .tk-string { color: var(--tk-string); }
 .tk-comment { color: var(--tk-comment); font-style: italic; }

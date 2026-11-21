@@ -182,14 +182,22 @@
                     @CompareList("본문 변경", comparison.BodyChanged.Select(f => ($"{f.Name}  {f.File}:{f.Line}", f.NodeId)))
                     @CompareList("시그니처 변경", comparison.SignatureChanged.Select(p => ($"{p.After.Name}  {p.After.File}:{p.After.Line}", p.After.NodeId)))
                     @CompareList("함수 추가", comparison.FunctionsAdded.Select(f => ($"{f.Name}  {f.File}:{f.Line}", f.NodeId)))
-                    @CompareList("함수 삭제", comparison.FunctionsRemoved.Select(f => ($"{f.Name}  {f.File}:{f.Line}", (string?)null)))
+                    @RemovedList(comparison.FunctionsRemoved)
                     @CompareList("이름 변경 후보", comparison.RenameCandidates.Select(p => ($"{p.Before.Name} → {p.After.Name}", p.After.NodeId)))
                     @CompareList("호출 추가", comparison.CallsAdded.Select(c => ($"{c.From} → {c.To}", (string?)null)))
                     @CompareList("호출 삭제", comparison.CallsRemoved.Select(c => ($"{c.From} → {c.To}", (string?)null)))
                 </div>
-                <p class="hint-line">함수 이름을 누르면 그 함수를 바꿔서 영향받는 진입점을 보여 줍니다. ·
+                @if (comparison.BodyChanged.Count > 0 && reviewLog is not null)
+                {
+                    var changedChecked = comparison.BodyChanged.Count(f => f.NodeId is not null && graph.Nodes.TryGetValue(f.NodeId, out var cn) &&
+                                                                           reviewLog.StateOf(cn) == ReviewLog.State.Checked);
+                    <p class="review-summary">검토: 본문이 바뀐 함수 @comparison.BodyChanged.Count 개 중 바뀐 뒤 확인 @changedChecked 개</p>
+                }
+                <p class="hint-line">함수 이름을 누르면 그 함수를 바꿔서 영향받는 진입점을 보여 줍니다. 지워진 함수는 기준 코드로 열립니다.
+                    코드 칸에서 기준과 본문이 다른 함수에는 <b>바뀐 줄 보기</b>가 생깁니다. ·
                     @string.Join(" · ", SnapshotComparer.Limits)</p>
             }
+            @GitSection()
         </section>
     }
 
@@ -247,6 +255,10 @@
                         <button class="entry @(selectedEntry == e ? "active" : "")" @onclick="() => SelectEntry(e)"
                                 title="@graph.Nodes[e.NodeId].Name">
                             <span class="label">@e.Label</span>
+                            @if (reviewLog is { Items.Count: > 0 } && ProgressOf(e.NodeId) is { Checked: > 0 } p)
+                            {
+                                <span class="progress" title="이 진입점에서 닿는 함수 @(p.Total)개 중 확인 @(p.Checked)개">@p.Checked/@p.Total</span>
+                            }
                             <span class="sub">@ShortName(graph.Nodes[e.NodeId].Name)</span>
                         </button>
                     }
@@ -381,6 +393,25 @@
                         </details>
                     </article>
                 }
+                @if (removedView is not null && baselineGraph is not null)
+                {
+                    var removedLines = removedView.Code.Split('\n');
+                    var removedColored = CodeColor.Lines(removedLines, baselineGraph.Language);
+                    <article class="frame removed">
+                        <div class="frame-head">
+                            <span class="fname">@removedView.Name</span>
+                            <span class="loc">@removedView.File:@removedView.StartLine</span>
+                            <span class="badge warn">지워진 함수 · 기준(@BaselineLabel) 코드 · 읽기 전용</span>
+                            <button class="link close" @onclick="() => removedView = null">✕ 닫기</button>
+                        </div>
+                        <div class="code">
+                            @for (var r = 0; r < removedLines.Length; r++)
+                            {
+                                <div class="line"><span class="ln">@(removedView.StartLine + r)</span><span class="src">@ColoredLine(removedColored[r])</span></div>
+                            }
+                        </div>
+                    </article>
+                }
                 @if (stack.Count > 0)
                 {
                     <FlowTools Graph="graph" Path="stack" ChangedFiles="ChangedFiles" />
@@ -414,6 +445,16 @@
                                     <span class="ico" style="--icon: url('lib/lucide/square-arrow-out-up-right.svg')"></span> 열기
                                 </button>
                             }
+                            @if (BaselineChange(node) is not null)
+                            {
+                                var diffId = stack[i];
+                                <button class="link icon-btn diff-toggle @(diffOn.Contains(diffId) ? "on" : "")"
+                                        title="비교 기준(@BaselineLabel)과 본문이 다릅니다. 누르면 바뀐 줄(빨강 = 지운 줄, 초록 = 더한 줄)"
+                                        @onclick="() => ToggleDiff(diffId)">
+                                    <span class="ico" style="--icon: url('lib/lucide/git-compare.svg')"></span>
+                                    @(diffOn.Contains(diffId) ? "지금 코드" : "바뀐 줄 보기")
+                                </button>
+                            }
                             @if (i > 0)
                             {
                                 var site = CallLines(stack[i - 1], stack[i]).Order().FirstOrDefault();
@@ -421,6 +462,32 @@
                             }
                             <button class="link close" title="여기까지만 보기" @onclick="() => TruncateStack(frameIndex + 1)">✕ 아래 닫기</button>
                         </div>
+                        @if (node.Kind != NodeKind.External && reviewLog is not null)
+                        {
+                            var rvNode = node;
+                            var rvState = reviewLog.StateOf(node);
+                            var rvItem = reviewLog.Find(node);
+                            <div class="review-row">
+                                <button class="rv @(rvState == ReviewLog.State.Checked ? "on" : "")"
+                                        title="이 함수를 읽고 확인함(다시 누르면 지움). 본문이 바뀌면 '다시 봐야 함'으로 바뀝니다"
+                                        @onclick="() => MarkReview(rvNode, ReviewLog.Mark.Checked)">✓ 확인</button>
+                                <button class="rv hold @(rvState == ReviewLog.State.Hold ? "on" : "")"
+                                        title="나중에 다시 볼 곳(다시 누르면 지움)" @onclick="() => MarkReview(rvNode, ReviewLog.Mark.Hold)">보류</button>
+                                @if (rvState == ReviewLog.State.Stale)
+                                {
+                                    <span class="badge warn" title="@($"{rvItem?.At.ToLocalTime():MM-dd HH:mm} 에 {(rvItem?.Mark == ReviewLog.Mark.Checked ? "확인" : "보류")} 표시한 뒤 본문이 바뀌었습니다")">다시 봐야 함</span>
+                                }
+                                @if (rvState != ReviewLog.State.None)
+                                {
+                                    <input class="rv-note" placeholder="메모 (입력 후 Enter 또는 바깥 클릭)" value="@rvItem?.Note"
+                                           @onchange="e => SetReviewNote(rvNode, e.Value?.ToString() ?? string.Empty)" />
+                                }
+                                else
+                                {
+                                    <span class="hint-line">읽었으면 확인 · 나중에 볼 곳은 보류</span>
+                                }
+                            </div>
+                        }
                         @if (FileChanged(node.File))
                         {
                             <div class="note warn">이 파일은 분석 뒤 바뀌었습니다. 아래 코드와 줄 번호는 분석 당시 것입니다 — 다시 분석하세요.</div>
@@ -429,13 +496,17 @@
                         {
                             <div class="note">분석 범위 밖 함수라 코드가 없습니다.</div>
                         }
+                        else if (diffOn.Contains(stack[i]) && BaselineChange(node) is { } beforeNode)
+                        {
+                            @DiffCode(beforeNode, node)
+                        }
                         else
                         {
                             var calls = CallsByLine(stack[i]);
                             <div class="code">
                                 @{
                                     var lines = node.Code.Split('\n');
-                                    var colored = CodeColor.Lines(lines, graph.Language);
+                                    var colored = Colored(node);
                                 }
                                 @for (var l = 0; l < lines.Length; l++)
                                 {
@@ -567,6 +638,7 @@
         {
             try
             {
+                await graphModule.InvokeVoidAsync("stopHistoryKeys");
                 await graphModule.InvokeVoidAsync("destroy", GraphElementId);
                 await graphModule.DisposeAsync();
             }
@@ -1063,8 +1135,12 @@
     private void Load()
     {
         var loaded = target is null ? null : Workspace.Get(target);
-        if (!ReferenceEquals(graph, loaded?.Graph))
+        var graphChanged = !ReferenceEquals(graph, loaded?.Graph);
+        if (graphChanged)
         {
+            colorCache.Clear();
+            baselineChangeCache.Clear();
+            diffCache.Clear();
             // 다른 대상·새 분석이면 이전 그래프로 계산한 결과는 버린다(없는 노드를 가리킬 수 있음)
             impact = null;
             freshness = null;
@@ -1087,6 +1163,9 @@
             flagged.Clear();
         }
         RefreshFreshness();
+        // 다시 분석하면 previous 기준이 새 파일로 바뀌므로 다시 읽는다
+        EnsureBaseline(reload: graphChanged);
+        ReloadReview();
         if (showCompare)
         {
             RefreshCompare(keepSelection: true);
@@ -1279,6 +1358,7 @@
             baselineId = snapshots.FirstOrDefault()?.Id ?? "";
         }
         comparison = baselineId.Length > 0 ? Workspace.Compare(target, baselineId) : null;
+        EnsureBaseline();
     }
 
     private void OnBaselineChanged(ChangeEventArgs e)
@@ -1328,6 +1408,262 @@
                 @if (list.Count > 100)
                 {
                     <li>… 외 @(list.Count - 100)개</li>
+                }
+            </ul>
+        </div>
+    };
+
+    // ---- 검토 기록(7단계 ②) ----
+
+    private ReviewLog? reviewLog;
+    private readonly Dictionary<string, (int Checked, int Total)> progressCache = [];
+
+    private (int Checked, int Total) ProgressOf(string entryNodeId)
+    {
+        if (!progressCache.TryGetValue(entryNodeId, out var p))
+        {
+            p = progressCache[entryNodeId] = reviewLog!.Progress(graph!, index!, entryNodeId);
+        }
+        return p;
+    }
+
+    private void ReloadReview()
+    {
+        reviewLog = target is null ? null : Workspace.LoadReview(target);
+        progressCache.Clear();
+    }
+
+    // 같은 표시를 다시 누르면 지운다(다시 봐야 함 상태에서 누르면 지금 본문으로 다시 표시)
+    private void MarkReview(TraceNode node, ReviewLog.Mark mark)
+    {
+        if (target is null || reviewLog is null)
+        {
+            return;
+        }
+        var state = reviewLog.StateOf(node);
+        var same = (mark, state) is (ReviewLog.Mark.Checked, ReviewLog.State.Checked) or (ReviewLog.Mark.Hold, ReviewLog.State.Hold);
+        reviewLog = Workspace.UpdateReview(target, log => log.Set(node, same ? null : mark));
+        progressCache.Clear();
+    }
+
+    private void SetReviewNote(TraceNode node, string note)
+    {
+        if (target is null)
+        {
+            return;
+        }
+        reviewLog = Workspace.UpdateReview(target, log => log.SetNote(node, note));
+        progressCache.Clear();
+    }
+
+    // ---- git 변경 대조(7단계 ④) ----
+
+    private GitChanges.Map? gitMap;
+    private string? gitError;
+    private bool gitRunning;
+    private TraceGraph? gitFor;
+
+    private async Task RunGitAsync()
+    {
+        if (graph is null || gitRunning)
+        {
+            return;
+        }
+        var g = graph;
+        gitRunning = true;
+        gitError = null;
+        StateHasChanged();
+        try
+        {
+            var result = await Task.Run(() => GitChanges.Read(g.RootDirectory));
+            if (!ReferenceEquals(g, graph))
+            {
+                return;   // 그사이 대상·결과가 바뀜
+            }
+            gitError = result.Error;
+            gitMap = result.Error is null ? GitChanges.Build(g, result) : null;
+            gitFor = g;
+        }
+        finally
+        {
+            gitRunning = false;
+        }
+    }
+
+    private RenderFragment GitSection() => __builder =>
+    {
+        var map = ReferenceEquals(gitFor, graph) ? gitMap : null;
+        <div class="git-changes">
+            <div class="compare-title">
+                git 변경 (작업 폴더 vs 마지막 커밋)
+                <button class="link" disabled="@gitRunning" @onclick="RunGitAsync">@(gitRunning ? "읽는 중…" : map is null ? "git 변경 보기" : "다시 읽기")</button>
+            </div>
+            @if (gitError is not null && ReferenceEquals(gitFor, graph))
+            {
+                <p class="warn-line">⚠ @gitError</p>
+            }
+            @if (map is not null)
+            {
+                @if (freshness?.State == FreshnessState.Stale)
+                {
+                    <p class="warn-line">⚠ 분석 뒤 코드가 바뀌었습니다. 함수 범위는 마지막 분석 기준이라 다시 분석해야 정확합니다.</p>
+                }
+                <p>바뀐 곳 @(map.Hits.Count + map.Misses.Count) · 흐름에 걸림 @map.Hits.Count · <b>흐름에 안 걸림 @map.Misses.Count</b>@(map.Untracked.Count > 0 ? $" · 새 파일(git 에 없음) {map.Untracked.Count}" : "")</p>
+                @if (map.Misses.Count + map.Untracked.Count > 0)
+                {
+                    <div class="compare-col">
+                        <div class="compare-title">흐름에 안 걸린 변경 <span class="count">@(map.Misses.Count + map.Untracked.Count)</span></div>
+                        <ul>
+                            @foreach (var m in map.Misses.Take(100))
+                            {
+                                var mf = m.Hunk.File;
+                                var ml = m.Hunk.Start;
+                                <li><button class="link mono" title="편집기에서 열기" @onclick="() => OpenInEditor(mf, ml)">@m.Hunk.Where</button> <span class="hint-line">@m.Reason</span></li>
+                            }
+                            @foreach (var u in map.Untracked.Take(50))
+                            {
+                                var uf = u;
+                                <li><button class="link mono" title="편집기에서 열기" @onclick="() => OpenInEditor(uf, 1)">@u</button> <span class="hint-line">git 에 없는 새 파일</span></li>
+                            }
+                        </ul>
+                    </div>
+                }
+                @if (map.Hits.Count > 0)
+                {
+                    <div class="compare-col">
+                        <div class="compare-title">흐름에 걸린 변경 <span class="count">@map.Hits.Count</span></div>
+                        <ul>
+                            @foreach (var h in map.Hits.Take(100))
+                            {
+                                <li>
+                                    <span class="mono">@h.Hunk.Where</span> →
+                                    @foreach (var id in h.NodeIds.Where(graph!.Nodes.ContainsKey))
+                                    {
+                                        var fid = id;
+                                        <button class="link mono" title="진입점부터 이 함수까지 · 닿는 진입점 목록" @onclick="() => OpenFunction(fid)">@ShortName(graph.Nodes[id].Name)</button>
+                                    }
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
+                <p class="hint-line">@string.Join(" · ", GitChanges.Limits)</p>
+            }
+            else if (!gitRunning)
+            {
+                <p class="hint-line">AI 가 고친 줄이 어느 흐름의 어느 함수에 걸리는지, 어떤 흐름에도 안 걸린 변경(등록 코드·헤더·설정 등)은 무엇인지 봅니다. git 은 읽기만 합니다.</p>
+            }
+        </div>
+    };
+
+    // ---- 흐름 안 전후 비교(7단계 ①) ----
+
+    // 비교 기준 결과(코드 포함). 비교 패널을 열지 않아도 기준이 있으면 코드 칸에서 바뀐 줄을 볼 수 있게 미리 읽는다.
+    private TraceGraph? baselineGraph;
+    private (string Target, string Id)? baselineFor;
+    private readonly HashSet<string> diffOn = [];
+    private TraceNode? removedView;
+
+    private string BaselineLabel => snapshots.FirstOrDefault(s => s.Id == baselineId)?.Label ?? "기준";
+
+    private void EnsureBaseline(bool reload = false)
+    {
+        if (target is null || graph is null)
+        {
+            baselineGraph = null;
+            baselineFor = null;
+            return;
+        }
+        snapshots = Workspace.ListSnapshots(target);
+        if (snapshots.All(s => s.Id != baselineId))
+        {
+            baselineId = snapshots.FirstOrDefault()?.Id ?? "";
+        }
+        if (!reload && baselineFor == (target, baselineId))
+        {
+            return;
+        }
+        baselineFor = (target, baselineId);
+        baselineGraph = baselineId.Length > 0 ? Workspace.LoadSnapshot(target, baselineId) : null;
+        removedView = null;
+        baselineChangeCache.Clear();
+        diffCache.Clear();
+    }
+
+    // 화면을 다시 그릴 때마다 같은 계산을 하지 않게: 색칠·기준 짝·줄 비교는 결과(그래프·기준)가 바뀔 때만 비운다
+    private readonly Dictionary<TraceNode, List<List<CodeColor.Token>>> colorCache = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<TraceNode, TraceNode?> baselineChangeCache = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<(TraceNode Before, TraceNode After), List<LineDiff.Line>> diffCache = [];
+
+    private List<List<CodeColor.Token>> Colored(TraceNode node)
+    {
+        if (!colorCache.TryGetValue(node, out var colored))
+        {
+            colored = colorCache[node] = CodeColor.Lines(node.Code.Split('\n'), graph?.Language ?? "cpp");
+        }
+        return colored;
+    }
+
+    // 이 함수의 기준 쪽 함수(본문이 다를 때만). 같으면·기준이 없으면·확실하지 않으면 null.
+    private TraceNode? BaselineChange(TraceNode node)
+    {
+        if (baselineGraph is null || graph is null || node.Kind == NodeKind.External)
+        {
+            return null;
+        }
+        if (!baselineChangeCache.TryGetValue(node, out var before))
+        {
+            var counterpart = SnapshotComparer.Counterpart(baselineGraph, node);
+            before = baselineChangeCache[node] =
+                counterpart is not null && SnapshotComparer.BodyChanged(baselineGraph, counterpart, graph, node) ? counterpart : null;
+        }
+        return before;
+    }
+
+    private void ToggleDiff(string id)
+    {
+        if (!diffOn.Remove(id))
+        {
+            diffOn.Add(id);
+        }
+    }
+
+    private RenderFragment DiffCode(TraceNode before, TraceNode after) => __builder =>
+    {
+        if (!diffCache.TryGetValue((before, after), out var lines))
+        {
+            lines = diffCache[(before, after)] = LineDiff.Compare(before.Code.Split('\n'), before.StartLine, after.Code.Split('\n'), after.StartLine);
+        }
+        var (added, removed) = LineDiff.Count(lines);
+        <div class="code diff">
+            <div class="note">기준(@BaselineLabel) → 지금 · 더한 줄 @added · 지운 줄 @removed · 왼쪽 숫자 = 지금 줄, 흐린 숫자 = 기준 줄 · 읽기 전용(호출 따라가기는 "지금 코드"에서)</div>
+            @foreach (var l in lines)
+            {
+                <div class="line diff-@(l.Op.ToString().ToLowerInvariant())">
+                    <span class="ln">@(l.After?.ToString() ?? "")</span><span class="ln old">@(l.Before?.ToString() ?? "")</span><span class="src">@(l.Op switch { LineDiff.Op.Added => "+ ", LineDiff.Op.Removed => "- ", _ => "  " })@l.Text</span>
+                </div>
+            }
+        </div>
+    };
+
+    private RenderFragment RemovedList(IReadOnlyList<SnapshotComparer.FunctionRef> removed) => __builder =>
+    {
+        if (removed.Count == 0)
+        {
+            return;
+        }
+        <div class="compare-col">
+            <div class="compare-title">함수 삭제 <span class="count">@removed.Count</span></div>
+            <ul>
+                @foreach (var f in removed.Take(100))
+                {
+                    var fid = f.NodeId;
+                    <li>
+                        <button class="link mono" title="기준(수정 전) 코드로 보기"
+                                @onclick="() => removedView = fid is not null && baselineGraph is not null ? baselineGraph.Nodes.GetValueOrDefault(fid) : null">
+                            @f.Name  @f.File:@f.Line
+                        </button>
+                    </li>
                 }
             </ul>
         </div>

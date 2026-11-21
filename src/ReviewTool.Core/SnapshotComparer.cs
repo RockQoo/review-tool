@@ -153,6 +153,32 @@ public static class SnapshotComparer
         return g.Edges.Select(e => (Key(e.From), Key(e.To))).ToHashSet();
     }
 
+    // 지금 함수에 해당하는 기준(수정 전) 함수: 이름이 같고, 시그니처가 있으면 시그니처도 같고, 여럿이면 같은 파일.
+    // 확실하지 않으면(같은 이름이 여러 파일에 있고 파일도 다르면) null — 엉뚱한 함수와 비교하지 않는다.
+    public static TraceNode? Counterpart(TraceGraph baseline, TraceNode node)
+    {
+        if (node.Kind == NodeKind.External)
+        {
+            return null;
+        }
+        var same = baseline.Nodes.Values.Where(n => n.Kind != NodeKind.External && n.Name == node.Name).ToList();
+        if (node.Signature.Length > 0 && same.Any(n => n.Signature.Length > 0))
+        {
+            var bySignature = same.Where(n => n.Signature == node.Signature).ToList();
+            if (bySignature.Count > 0)
+            {
+                same = bySignature;
+            }
+        }
+        return same.Count == 1 ? same[0] : same.FirstOrDefault(n => n.File == node.File);
+    }
+
+    // 기준과 본문이 다른가. 지문 방식이 같으면 지문으로(공백·주석만 바뀐 것은 같음), 아니면 정규화한 코드로.
+    public static bool BodyChanged(TraceGraph baseline, TraceNode before, TraceGraph current, TraceNode after) =>
+        baseline.FingerprintVersion == current.FingerprintVersion && before.BodyHash.Length > 0 && after.BodyHash.Length > 0
+            ? before.BodyHash != after.BodyHash
+            : CodeFingerprint.Normalize(before.Code) != CodeFingerprint.Normalize(after.Code);
+
     // 이름만 바뀐 함수: 시그니처에서 이름을 뺀 나머지와 본문이 같다
     private static bool SameBodyIgnoringName(TraceNode a, TraceNode b)
     {
