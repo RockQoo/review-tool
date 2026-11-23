@@ -92,8 +92,14 @@ public sealed class CSharpTraceAnalyzer : ITraceAnalyzer
                 graph.Diagnostics.Add($"진입점의 정의를 찾지 못함: {candidate.RelativeFile}:{candidate.Line} {candidate.Method}");
                 continue;
             }
-            if (graph.EntryPoints.Any(e => e.NodeId == root))
+            if (graph.EntryPoints.FirstOrDefault(e => e.NodeId == root) is { } existing)
             {
+                // 같은 함수를 일반 규칙(Handle* 등)과 메시지 통로 등록이 함께 찾으면, 통로의 종류(crossProcess 로 정한 패킷/메시지)가
+                // 더 확실한 근거다. 일반 규칙이 먼저 처리돼도 통로 쪽 종류로 바꾼다(표시 이름·묶음은 먼저 것 그대로).
+                if (!config.EntryPoints.Contains(candidate.Rule))
+                {
+                    existing.Kind = EntryKind.Of(candidate.Rule);
+                }
                 continue;
             }
             var node = graph.Nodes[root];

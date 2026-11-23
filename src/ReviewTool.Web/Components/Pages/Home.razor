@@ -1793,11 +1793,28 @@
     // 켠 종류. 지금 대상에 없는 종류가 남아 있어도(대상을 바꾼 뒤) 없는 것은 무시한다.
     private readonly HashSet<string> selectedKinds = new(StringComparer.Ordinal);
 
+    // 진입점별 종류와 종류별 수. 분석 결과(graph)가 바뀔 때만 다시 센다(검색 입력·선택마다 다시 그리므로).
+    private TraceGraph? kindsOf_;
+    private Dictionary<EntryPoint, string> kindByEntry_ = [];
+    private List<(string Kind, int Count)> kindCounts_ = [];
+
+    private void EnsureKinds()
+    {
+        if (ReferenceEquals(kindsOf_, graph))
+        {
+            return;
+        }
+        kindsOf_ = graph;
+        kindByEntry_ = graph!.EntryPoints.ToDictionary(e => e, EntryKind.Of, ReferenceEqualityComparer.Instance);
+        var counts = kindByEntry_.Values.GroupBy(k => k).ToDictionary(g => g.Key, g => g.Count());
+        kindCounts_ = EntryKind.All.Where(counts.ContainsKey).Select(k => (k, counts[k])).ToList();
+    }
+
     // 지금 대상에 있는 종류와 진입점 수(화면 순서대로)
     private List<(string Kind, int Count)> KindCounts()
     {
-        var counts = graph!.EntryPoints.GroupBy(EntryKind.Of).ToDictionary(g => g.Key, g => g.Count());
-        return EntryKind.All.Where(counts.ContainsKey).Select(k => (k, counts[k])).ToList();
+        EnsureKinds();
+        return kindCounts_;
     }
 
     private void ToggleKind(string kind)
@@ -1811,9 +1828,9 @@
     private IEnumerable<EntryPoint> FilteredEntries()
     {
         var q = entryFilter.Trim();
-        var present = graph!.EntryPoints.Select(EntryKind.Of).ToHashSet();
-        var kinds = selectedKinds.Where(present.Contains).ToHashSet();
-        return graph!.EntryPoints.Where(e => (kinds.Count == 0 || kinds.Contains(EntryKind.Of(e))) && (q.Length == 0
+        EnsureKinds();
+        var kinds = selectedKinds.Where(k => kindCounts_.Any(c => c.Kind == k)).ToHashSet();
+        return graph!.EntryPoints.Where(e => (kinds.Count == 0 || kinds.Contains(kindByEntry_[e])) && (q.Length == 0
             || e.Label.Contains(q, StringComparison.OrdinalIgnoreCase)
             || e.Group.Contains(q, StringComparison.OrdinalIgnoreCase)
             || graph.Nodes[e.NodeId].Name.Contains(q, StringComparison.OrdinalIgnoreCase)));

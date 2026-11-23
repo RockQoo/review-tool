@@ -55,6 +55,106 @@ public class EntryKindTests
         Assert.NotEqual(plain.ContentHash(), marked.ContentHash());
     }
 
+    // 같은 함수를 일반 규칙(Handle*, 패킷)과 메시지 통로(crossProcess: false)가 함께 찾으면 메시지다(일반 규칙이 먼저 처리돼도).
+    private static readonly MessageChannel Lane = new()
+    {
+        Name = "레인",
+        CrossProcess = false,
+        Send = @"\bPush\b",
+        Key = @"\b(?<key>EMsg(?:\.|::)\w+)",
+        Register = @"\bRegist\(\s*(?<key>EMsg(?:\.|::)\w+)\s*,\s*&?(?:(?<class>\w+)::)?(?<method>\w+)\s*\)",
+    };
+
+    [Fact]
+    public async Task CSharp_메시지_통로_등록이_일반_규칙보다_우선한다()
+    {
+        var root = Directory.CreateTempSubdirectory("rt-kind-cs").FullName;
+        var data = Directory.CreateTempSubdirectory("rt-kind-cs-data").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "App.csproj"), """<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>""");
+            File.WriteAllText(Path.Combine(root, "Zone.cs"), """
+                public enum EMsg { Tick }
+                public class Lane { public void Regist(EMsg m, System.Action a) { } }
+                public class Zone
+                {
+                    private readonly Lane _lane = new();
+                    public void Init() { _lane.Regist(EMsg.Tick, HandleTick); }
+                    public void HandleTick() { }
+                }
+                """);
+            var handle = CSharpTargetDetector.Presets.Single(p => p.Name.StartsWith("Handle")).ToRule();
+            var config = new TargetConfig { Name = "k", Root = root, Language = "csharp", EntryPoints = [handle], Channels = [Lane] };
+
+            var graph = await new CSharpTraceAnalyzer().AnalyzeAsync(config, new WorkPaths(data, "k"), null, CancellationToken.None);
+
+            var entry = Assert.Single(graph.EntryPoints);
+            Assert.Equal(EntryKind.Message, EntryKind.Of(entry));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(data, recursive: true);
+        }
+    }
+
+    // 실제 clangd 로 분석한다. clangd 가 없는 PC 에서는 아무것도 하지 않고 통과한다.
+    [Fact]
+    public async Task Cpp_메시지_통로_등록이_일반_규칙보다_우선한다()
+    {
+        string clangd;
+        try
+        {
+            clangd = ClangdSession.FindClangd("");
+        }
+        catch (FileNotFoundException)
+        {
+            return;
+        }
+        var root = Directory.CreateTempSubdirectory("rt-kind-cpp").FullName;
+        var data = Directory.CreateTempSubdirectory("rt-kind-cpp-data").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "Zone.cpp"), """
+                enum class EMsg { Tick };
+                struct Zone;
+                struct Lane { void Regist(EMsg m, void (Zone::*h)()) {} };
+                struct Zone
+                {
+                    Lane lane;
+                    void Init();
+                    void HandleTick();
+                };
+                void Zone::Init()
+                {
+                    lane.Regist(EMsg::Tick, &Zone::HandleTick);
+                }
+                void Zone::HandleTick()
+                {
+                }
+                """);
+            var handle = CppTargetDetector.Presets.Single(p => p.Name.StartsWith("Handle")).ToRule();
+            var config = new TargetConfig
+            {
+                Name = "k",
+                Root = root,
+                EntryPoints = [handle],
+                Channels = [Lane],
+                Cpp = new CppOptions { Clangd = clangd, CompileFrom = "flags", Standard = "c++20", DetectMsvc = false, IndexTimeoutSeconds = 120 },
+            };
+
+            var graph = await new CppTraceAnalyzer().AnalyzeAsync(config, new WorkPaths(data, "k"), null, CancellationToken.None);
+
+            var entry = Assert.Single(graph.EntryPoints);
+            Assert.Equal(EntryKind.Message, EntryKind.Of(entry));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(data, recursive: true);
+        }
+    }
+
     [Fact]
     public void 자동_감지_규칙은_종류가_정해져_있다()
     {
