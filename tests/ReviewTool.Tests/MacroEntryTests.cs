@@ -62,12 +62,24 @@ public class MacroEntryTests
     }
 
     [Fact]
+    public void 블록_주석은_여러_줄에_걸쳐_지운다()
+    {
+        string[] lines = ["TEST(S, A) { /* }", "   } */ Foo(); /* } */ Bar();", "}", "int x = Baz();"];
+        var body = CallTreeWalker.BodyLines(lines, 1, 4).ToList();
+
+        Assert.Equal([1, 2, 3], body.Select(b => b.Line));
+        Assert.Contains("Foo(", body[1].Code);
+        Assert.Contains("Bar(", body[1].Code);
+        Assert.DoesNotContain(body, b => b.Code.Contains("Baz"));
+    }
+
+    [Fact]
     public void 자동_감지가_gtest_규칙을_매크로로_켠다()
     {
         var s = CppTargetDetector.Suggest(Fixture);
 
         var gtest = s.Presets.Single(p => p.Preset.Name == "gtest 테스트");
-        Assert.Equal(6, gtest.Matches);
+        Assert.Equal(7, gtest.Matches);
         Assert.True(gtest.Enabled);
         var rule = Assert.Single(s.Config.EntryPoints, r => r.Name == "gtest 테스트");
         Assert.True(rule.Macro);
@@ -146,7 +158,7 @@ public class MacroEntryTests
 
             var graph = await new CppTraceAnalyzer().AnalyzeAsync(config, new WorkPaths(data, "gtest"), null, CancellationToken.None);
 
-            Assert.Equal(["Adds", "Externals", "OneLine", "Sibling", "Streams", "Templates"], graph.EntryPoints.Select(e => e.Label).Order());
+            Assert.Equal(["Adds", "Comments", "Externals", "OneLine", "Sibling", "Streams", "Templates"], graph.EntryPoints.Select(e => e.Label).Order());
             // 진입점 파일이 한 폴더뿐이라 묶음 이름은 클래스(테스트 묶음)만 남는다
             Assert.All(graph.EntryPoints, e => Assert.Equal("Calc", e.Group));
 
@@ -171,6 +183,11 @@ public class MacroEntryTests
             Assert.Equal(["Twice"], CalleesOf("OneLine"));
             // 같은 줄에 이어지는 다른 함수(Helper)의 호출은 이 테스트 것이 아니다
             Assert.Equal(["Twice"], CalleesOf("Sibling"));
+            // 블록 주석(여러 줄 포함) 속 중괄호를 본문 끝으로 보지 않는다. 두 호출 위치가 모두 남는다
+            var commentsId = graph.EntryPoints.Single(e => e.Label == "Comments").NodeId;
+            var twice = graph.Edges.Single(e => e.From == commentsId);
+            Assert.Equal("Twice", graph.Nodes[twice.To].Name);
+            Assert.Equal(2, twice.CallSites.Count);
 
             // 중첩 템플릿 인자 호출(Count<Box<Box<int>>>(n))과 숫자 구분자(1'000) 뒤의 호출
             Assert.Equal(["Count"], CalleesOf("Templates"));

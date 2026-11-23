@@ -418,14 +418,15 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
         @"(?<at>\b[A-Za-z_]\w*)\s*(?:<(?>[^<>()]+|<(?<d>)|>(?<-d>))*(?(d)(?!))>)?\s*\(|(?<at><<|>>)", RegexOptions.Compiled);
 
     // 본문 중괄호 { } 안쪽만 남긴 줄(1부터 세는 줄, 열 위치 그대로). 첫 줄은 매크로 부분을 지우고, 첫 '{' 앞과
-    // 짝이 맞는 '}' 뒤(같은 줄에 이어지는 다른 함수 등)도 지운다. 문자열·주석 속 중괄호는 CodeOnly 가 먼저 지운다.
+    // 짝이 맞는 '}' 뒤(같은 줄에 이어지는 다른 함수 등)도 지운다. 문자열·주석(여러 줄 /* */ 포함) 속 중괄호는 CodeOnly 가 먼저 지운다.
     internal static IEnumerable<(int Line, string Code)> BodyLines(string[] lines, int startLine, int endLine)
     {
         var depth = 0;
         var started = false;
+        var inBlockComment = false;
         for (var line = startLine; line <= Math.Min(endLine, lines.Length); line++)
         {
-            var text = CodeOnly(lines[line - 1]);
+            var text = CodeOnly(lines[line - 1], ref inBlockComment);
             var code = (line == startLine ? BlankMacroHead(text) : text).ToCharArray();
             for (var i = 0; i < code.Length; i++)
             {
@@ -482,14 +483,35 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
         ["if", "for", "while", "switch", "return", "sizeof", "alignof", "decltype", "catch", "static_cast",
          "reinterpret_cast", "const_cast", "dynamic_cast", "noexcept", "requires", "co_await", "co_return"];
 
-    // 문자열·문자 리터럴과 // 주석을 공백으로 바꾼다(열 위치는 그대로). 그 안의 "Foo(" 를 호출로 묻지 않게.
+    // 문자열·문자 리터럴과 주석(//, /* */)을 공백으로 바꾼다(열 위치는 그대로). 그 안의 "Foo(" 나 중괄호를 코드로 보지 않게.
     internal static string CodeOnly(string line)
+    {
+        var inBlockComment = false;
+        return CodeOnly(line, ref inBlockComment);
+    }
+
+    // 여러 줄 블록 주석용: inBlockComment 는 앞 줄에서 열린 /* 가 아직 안 닫혔는지. 이 줄 끝의 상태로 바꿔 돌려준다.
+    internal static string CodeOnly(string line, ref bool inBlockComment)
     {
         var chars = line.ToCharArray();
         var quote = '\0';
         for (var i = 0; i < chars.Length; i++)
         {
             var c = chars[i];
+            if (inBlockComment)
+            {
+                if (c == '*' && i + 1 < chars.Length && chars[i + 1] == '/')
+                {
+                    chars[i] = chars[i + 1] = ' ';
+                    i++;
+                    inBlockComment = false;
+                }
+                else
+                {
+                    chars[i] = ' ';
+                }
+                continue;
+            }
             if (quote != '\0')
             {
                 if (c == '\\' && i + 1 < chars.Length)
@@ -519,6 +541,12 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
             {
                 Array.Fill(chars, ' ', i, chars.Length - i);
                 break;
+            }
+            else if (c == '/' && i + 1 < chars.Length && chars[i + 1] == '*')
+            {
+                chars[i] = chars[i + 1] = ' ';
+                i++;
+                inBlockComment = true;
             }
         }
         return new string(chars);

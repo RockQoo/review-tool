@@ -40,3 +40,10 @@ TEST(Calc, Externals)
 }
 
 TEST(Calc, Sibling) { Twice(2); } int Helper() { const Calc c; return c.Add(1, 1); }
+
+TEST(Calc, Comments)
+{
+    /* } 닫는 중괄호가 주석에 있다
+       Calc::Add(...) 도 주석이다 */ Twice(5); /* } */
+    Twice(6);
+}
