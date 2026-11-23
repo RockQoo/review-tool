@@ -16,9 +16,10 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
     [
         new("list_targets", "분석 대상 목록과 각 대상의 분석 시각·규모·신선도(분석 뒤 코드가 바뀌었는지).",
             Schema(), _ => ListTargets()),
-        new("get_entrypoints", "대상의 진입점(패킷 핸들러) 목록. filter 로 이름·그룹 일부를 걸러 낸다.",
-            Schema(("target", "string", "대상 이름", true), ("filter", "string", "이름·그룹에 들어간 글자(선택)", false)),
-            a => Entrypoints(Target(a), Opt(a, "filter"))),
+        new("get_entrypoints", "대상의 진입점 목록(종류: 패킷·메시지·시작·테스트·함수). filter 로 이름·그룹 일부, kind 로 종류를 걸러 낸다.",
+            Schema(("target", "string", "대상 이름", true), ("filter", "string", "이름·그룹에 들어간 글자(선택)", false),
+                   ("kind", "string", "종류(선택): packet·message·start·test·function 또는 패킷·메시지·시작·테스트·함수", false)),
+            a => Entrypoints(Target(a), Opt(a, "filter"), Opt(a, "kind"))),
         new("find_functions", "함수 이름(일부 가능)으로 함수 id 를 찾는다. 다른 도구의 function 인자에 id 나 이름을 넣는다.",
             Schema(("target", "string", "대상 이름", true), ("query", "string", "함수 이름 또는 일부", true)),
             a => Find(Target(a), Req(a, "query"))),
@@ -172,10 +173,15 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
         }
     }
 
-    private static string Entrypoints((TraceGraph G, TraceIndex I) t, string? filter)
+    private static string Entrypoints((TraceGraph G, TraceIndex I) t, string? filter, string? kind = null)
     {
+        if (kind is not null && EntryKind.Normalize(kind) is null)
+        {
+            return $"모르는 종류: {kind} (packet·message·start·test·function)";
+        }
+        var wanted = kind is null ? null : EntryKind.Normalize(kind);
         var sb = new StringBuilder();
-        var list = t.G.EntryPoints.Where(e => filter is null ||
+        var list = t.G.EntryPoints.Where(e => wanted is null || EntryKind.Of(e) == wanted).Where(e => filter is null ||
                                               e.Label.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
                                               e.Group.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
         foreach (var group in list.GroupBy(e => e.Group))
@@ -183,7 +189,8 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
             sb.Append("## ").Append(group.Key).Append('\n');
             foreach (var e in group)
             {
-                sb.Append("- ").Append(e.Label).Append("  id=").Append(e.NodeId).Append("  등록 ").Append(e.RegisteredAt).Append('\n');
+                sb.Append("- ").Append(e.Label).Append("  [").Append(EntryKind.Label(EntryKind.Of(e))).Append("]  id=").Append(e.NodeId)
+                  .Append("  등록 ").Append(e.RegisteredAt).Append('\n');
             }
         }
         return list.Count == 0 ? "맞는 진입점이 없습니다." : $"진입점 {list.Count}개\n\n{sb}";

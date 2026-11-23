@@ -11,20 +11,20 @@ public static partial class CppTargetDetector
     public static readonly EntryPreset[] Presets =
     [
         new("멤버 함수 등록", @"Register\(\s*(?:this\s*,\s*)?&(?<class>\w+)::(?<method>\w+)\s*\)", [],
-            "dispatcher.Register(this, &Class::HandleX) / Register(&Class::HandleX)"),
+            "dispatcher.Register(this, &Class::HandleX) / Register(&Class::HandleX)", Kind: EntryKind.Packet),
         new("핸들러 표 대입", @"\[\s*[\w:]+\s*\]\s*=\s*&(?<class>\w+)::(?<method>\w+)", [],
-            "handlers[PacketId::X] = &Class::HandleX"),
+            "handlers[PacketId::X] = &Class::HandleX", Kind: EntryKind.Packet),
         new("OnPacket 구현", @"^void[ \t]+(?<class>\w+)::(?<method>OnPacket\w*)[ \t]*\(", ["**/*.cpp"],
-            "void XxxHandler::OnPacket(...) 처럼 수신 함수를 직접 구현한 곳"),
+            "void XxxHandler::OnPacket(...) 처럼 수신 함수를 직접 구현한 곳", Kind: EntryKind.Packet),
         // 들여쓰기 없는 줄(= 함수 정의)만. 본문 안의 Foo::HandleX( 호출은 들여쓰기가 있어 걸리지 않는다.
         new("Handle 로 시작하는 함수", @"^(?:[\w:<>,\*&]+[ \t]+)*(?<class>\w+)::(?<method>Handle\w+)[ \t]*\(", ["**/*.cpp"],
-            "등록 코드를 못 찾을 때 쓰는 넓은 규칙: .cpp 의 Class::HandleXxx 정의 전부"),
+            "등록 코드를 못 찾을 때 쓰는 넓은 규칙: .cpp 의 Class::HandleXxx 정의 전부", Kind: EntryKind.Packet),
         // 시작 흐름(main → Init) 용. 다른 규칙과 상관없이 찾으면 켠다.
         new("시작 함수", @"^(?:int|auto)[ \t]+(?<method>w?main)[ \t]*\(", ["**/*.cpp"],
-            "int main(...) — 설정 로딩·스레드·핸들러 등록·리스너 순서를 흐름 요약으로 본다"),
+            "int main(...) — 설정 로딩·스레드·핸들러 등록·리스너 순서를 흐름 요약으로 본다", Kind: EntryKind.Start),
         // 단위 테스트도 흐름을 보는 진입점이다(테스트 → 라이브러리 함수). 묶음 = 테스트 묶음(Suite).
         new("gtest 테스트", @"^TEST(?:_F|_P)?\(\s*(?<class>\w+)\s*,\s*(?<method>\w+)\s*\)", ["**/*.cpp"],
-            "TEST(Suite, Name) / TEST_F / TEST_P — 테스트가 부르는 라이브러리 함수 흐름", Macro: true),
+            "TEST(Suite, Name) / TEST_F / TEST_P — 테스트가 부르는 라이브러리 함수 흐름", Macro: true, Kind: EntryKind.Test),
     ];
 
     private static readonly string[] ThirdPartyNames =

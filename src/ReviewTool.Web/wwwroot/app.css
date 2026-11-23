@@ -247,6 +247,15 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .entries { padding: 8px; background: var(--panel); }
 .entries .search { width: 100%; margin-bottom: 8px; }
 .entries .group { color: var(--muted); font-size: 12px; margin: 10px 4px 4px; }
+/* 진입점 종류 필터(패킷 / 메시지 / 시작 / 테스트 / 함수) */
+.entries .kind-filter { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 6px; }
+.entries .kind-filter .kind {
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    border-radius: 99px; padding: 1px 9px; font-size: 12px; cursor: pointer;
+}
+.entries .kind-filter .kind:hover { border-color: var(--accent); }
+.entries .kind-filter .kind.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.entries .kind-filter .kind .count { margin-left: 5px; opacity: .75; }
 /* 2단 트리: 폴더(접기/펼치기) ▸ 클래스 ▸ 진입점 */
 .entries .group.folder,
 .entries .group.cls {

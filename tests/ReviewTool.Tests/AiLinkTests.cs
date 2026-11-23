@@ -323,7 +323,11 @@ public class AiLinkTests
         Assert.Contains("## t", targets);
         Assert.Contains("진입점 1 · 함수 4 · 호출 4", targets);
 
-        Assert.Contains("C2SLogin  id=E@1", f.CallTool("get_entrypoints", new JsonObject { ["target"] = "t" }).Text);
+        // Detector 가 없는 진입점은 종류를 "함수"로 추정한다
+        Assert.Contains("C2SLogin  [함수]  id=E@1", f.CallTool("get_entrypoints", new JsonObject { ["target"] = "t" }).Text);
+        Assert.Contains("진입점 1개", f.CallTool("get_entrypoints", new JsonObject { ["target"] = "t", ["kind"] = "함수" }).Text);
+        Assert.Contains("맞는 진입점이 없습니다", f.CallTool("get_entrypoints", new JsonObject { ["target"] = "t", ["kind"] = "packet" }).Text);
+        Assert.Contains("모르는 종류", f.CallTool("get_entrypoints", new JsonObject { ["target"] = "t", ["kind"] = "zzz" }).Text);
         Assert.Contains("id=A@1", f.CallTool("find_functions", new JsonObject { ["target"] = "t", ["query"] = "Enter" }).Text);
         Assert.Contains("[추정 연결: Registration]", f.CallTool("get_flow", new JsonObject { ["target"] = "t", ["function"] = "E@1", ["depth"] = 3 }).Text);
 

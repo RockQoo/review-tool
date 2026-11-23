@@ -104,6 +104,7 @@ public sealed class CSharpTraceAnalyzer : ITraceAnalyzer
                 Group = MakeGroup(candidate.RelativeFile, candidate.ClassName ?? ClassOf(node), projectDirs),
                 RegisteredAt = new SourceRef { File = candidate.RelativeFile, Line = candidate.Line, Column = candidate.Column },
                 Detector = candidate.Rule.Name,
+                Kind = EntryKind.Of(candidate.Rule),
             });
             walker.Walk(root, ct);
         }
@@ -126,6 +127,7 @@ public sealed class CSharpTraceAnalyzer : ITraceAnalyzer
                     Group = MakeGroup(node.File, "Program", projectDirs),
                     RegisteredAt = new SourceRef { File = node.File, Line = node.StartLine },
                     Detector = StartRule + "(최상위 문)",
+                    Kind = EntryKind.Start,
                 });
                 walker.Walk(root, ct);
             }
@@ -165,7 +167,12 @@ public sealed class CSharpTraceAnalyzer : ITraceAnalyzer
     internal static List<EntryCandidate> FindEntryPoints(TargetConfig config, IEnumerable<string> files)
     {
         var channelRules = config.Channels.Where(c => !string.IsNullOrWhiteSpace(c.Register))
-            .Select(c => new EntryPointRule { Name = c.Name, Pattern = c.Register });
+            .Select(c => new EntryPointRule
+            {
+                Name = c.Name,
+                Pattern = c.Register,
+                Kind = c.CrossProcess ? EntryKind.Packet : EntryKind.Message,
+            });
         var rules = config.EntryPoints.Concat(channelRules)
             .Select(rule => (Rule: rule, Regex: new Regex(rule.Pattern, RegexOptions.Multiline),
                              Files: rule.Files.Count > 0 ? GlobMatcher.Build(rule.Files, []) : (_ => true)))

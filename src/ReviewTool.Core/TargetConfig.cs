@@ -111,9 +111,15 @@ public sealed class EntryPointRule
     public string Pattern { get; set; } = "";
     // 파일 glob. 비우면 Include 전체.
     public List<string> Files { get; set; } = [];
-    // 매크로가 만드는 함수(gtest 의 TEST(Suite, Name) 등). clangd 에는 매크로 이름 위치로 묻고(그래야 본문이 잡힌다),
-    // 같은 매크로로 만든 함수끼리 심볼 ID 를 나눠 가지므로 위치마다 다른 노드로 두고 제 본문 안 호출만 쓴다.
+    // 매크로가 만드는 함수(gtest 의 TEST(Suite, Name) 등). clangd 가 매크로 자리에 답하지 않아 노드를 소스에서 만들고,
+    // 본문의 호출 위치마다 정의를 따라가 호출을 찾는다(CallTreeWalker.BodyCallsAsync).
+    // 기본값이면 저장·설정 지문에 넣지 않는다(이 값이 없던 기존 설정의 분석 결과가 "설정 바뀜"이 되지 않게).
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Macro { get; set; }
+    // 진입점 종류(화면 필터): packet·message·start·test·function (한글 패킷·메시지·시작·테스트·함수도 받는다).
+    // 비우면 규칙 이름으로 추정한다(EntryKind.Infer). 비었으면 저장·설정 지문에 넣지 않는다.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Kind { get; set; }
 }
 
 // 메시지 통로 하나. 정규식은 모두 소스 텍스트에 돈다.

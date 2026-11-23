@@ -120,6 +120,7 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
                 Group = MakeGroup(candidate.RelativeFile, candidate.ClassName, groupPrefix, projectDirs),
                 RegisteredAt = new SourceRef { File = candidate.RelativeFile, Line = candidate.Line, Column = candidate.Column },
                 Detector = candidate.Rule.Name,
+                Kind = EntryKind.Of(candidate.Rule),
             });
             await walker.WalkAsync(root, cancellationToken);
         }
@@ -172,7 +173,12 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
     {
         // 메시지 통로의 핸들러 등록(Regist(EMsg::X, &C::H) 등)도 진입점이다. 표시 이름은 메시지 이름(key).
         var channelRules = config.Channels.Where(c => !string.IsNullOrWhiteSpace(c.Register))
-            .Select(c => new EntryPointRule { Name = c.Name, Pattern = c.Register });
+            .Select(c => new EntryPointRule
+            {
+                Name = c.Name,
+                Pattern = c.Register,
+                Kind = c.CrossProcess ? EntryKind.Packet : EntryKind.Message,
+            });
         var rules = config.EntryPoints.Concat(channelRules)
             .Select(rule => (Rule: rule, Regex: new Regex(rule.Pattern, RegexOptions.Multiline),
                              Files: rule.Files.Count > 0 ? GlobMatcher.Build(rule.Files, []) : (_ => true)))

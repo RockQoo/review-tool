@@ -247,6 +247,24 @@
         <main class="panes mode-@LayoutMode">
             <nav class="pane entries">
                 <input class="search" placeholder="진입점 찾기 (패킷, 함수)" @bind="entryFilter" @bind:event="oninput" />
+                @* 종류 필터: 패킷 / 메시지 / 시작 / 테스트 / 함수. 여러 개 켤 수 있고, 아무것도 안 켜면 전체. 종류가 하나뿐이면 숨긴다. *@
+                @{
+                    var kindCounts = KindCounts();
+                }
+                @if (kindCounts.Count > 1)
+                {
+                    <div class="kind-filter" role="group" aria-label="진입점 종류">
+                        @foreach (var (kind, count) in kindCounts)
+                        {
+                            var k = kind;
+                            var on = selectedKinds.Contains(k);
+                            <button class="kind @(on ? "on" : "")" aria-pressed="@(on ? "true" : "false")" @onclick="() => ToggleKind(k)"
+                                    title="@(on ? "이 종류 빼기" : "이 종류만 보기(여러 개 가능)")">
+                                @EntryKind.Label(k)<span class="count">@count</span>
+                            </button>
+                        }
+                    </div>
+                }
                 @* 2단 트리: 폴더(프로젝트) ▸ 클래스 ▸ 진입점. 묶음 이름 "폴더 / 클래스"를 화면에서만 나눈다. *@
                 @foreach (var folder in FilteredEntries().GroupBy(e => EntryFolder(e.Group)))
                 {
@@ -1770,13 +1788,35 @@
         }
     }
 
+    // ---- 진입점 종류 필터 ----
+
+    // 켠 종류. 지금 대상에 없는 종류가 남아 있어도(대상을 바꾼 뒤) 없는 것은 무시한다.
+    private readonly HashSet<string> selectedKinds = new(StringComparer.Ordinal);
+
+    // 지금 대상에 있는 종류와 진입점 수(화면 순서대로)
+    private List<(string Kind, int Count)> KindCounts()
+    {
+        var counts = graph!.EntryPoints.GroupBy(EntryKind.Of).ToDictionary(g => g.Key, g => g.Count());
+        return EntryKind.All.Where(counts.ContainsKey).Select(k => (k, counts[k])).ToList();
+    }
+
+    private void ToggleKind(string kind)
+    {
+        if (!selectedKinds.Remove(kind))
+        {
+            selectedKinds.Add(kind);
+        }
+    }
+
     private IEnumerable<EntryPoint> FilteredEntries()
     {
         var q = entryFilter.Trim();
-        return graph!.EntryPoints.Where(e => q.Length == 0
+        var present = graph!.EntryPoints.Select(EntryKind.Of).ToHashSet();
+        var kinds = selectedKinds.Where(present.Contains).ToHashSet();
+        return graph!.EntryPoints.Where(e => (kinds.Count == 0 || kinds.Contains(EntryKind.Of(e))) && (q.Length == 0
             || e.Label.Contains(q, StringComparison.OrdinalIgnoreCase)
             || e.Group.Contains(q, StringComparison.OrdinalIgnoreCase)
-            || graph.Nodes[e.NodeId].Name.Contains(q, StringComparison.OrdinalIgnoreCase));
+            || graph.Nodes[e.NodeId].Name.Contains(q, StringComparison.OrdinalIgnoreCase)));
     }
 
     // ---- 함수 검색 ----

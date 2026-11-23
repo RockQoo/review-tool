@@ -88,6 +88,8 @@ public sealed class EntryPoint
     // 진입점으로 판단한 근거: 등록한 줄.
     public SourceRef RegisteredAt { get; set; } = new();
     public string Detector { get; set; } = "";
+    // 진입점 종류(EntryKind). 이 값이 없던 때 저장한 결과는 비어 있고, 그때는 EntryKind.Of 가 Detector 로 추정한다.
+    public string Kind { get; set; } = "";
 }
 
 public sealed class TraceNode

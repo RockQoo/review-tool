@@ -9,15 +9,15 @@ public static class CSharpTargetDetector
     public static readonly EntryPreset[] Presets =
     [
         new("메서드 등록", @"\bRegister\w*\s*(?:<[^>()]*>)?\s*\(\s*(?:[\w.]+\s*,\s*)?(?:(?<class>[A-Z]\w*)\.|[a-z_]\w*\.)?(?<method>[A-Z]\w+)\s*\)", ["**/*.cs"],
-            "dispatcher.Register(PacketId.X, HandleX) / Register<C2SLogin>(OnLogin) 처럼 메서드 이름을 넘기는 등록"),
+            "dispatcher.Register(PacketId.X, HandleX) / Register<C2SLogin>(OnLogin) 처럼 메서드 이름을 넘기는 등록", Kind: EntryKind.Packet),
         new("핸들러 특성", @"\[\s*(?:Packet)?Handler\b[^\]]*\]\s*(?:\[[^\]]*\]\s*)*(?:(?:public|internal|private|protected|static|async|override|virtual)\s+)*[\w<>\[\]?.,]+\s+(?<method>\w+)\s*\(", ["**/*.cs"],
-            "[PacketHandler(...)] 처럼 특성을 단 메서드"),
+            "[PacketHandler(...)] 처럼 특성을 단 메서드", Kind: EntryKind.Packet),
         new("API 컨트롤러 액션", @"\[\s*Http(?:Get|Post|Put|Delete|Patch)\b[^\]]*\]\s*(?:\[[^\]]*\]\s*)*public\s+(?:async\s+)?[\w<>\[\]?.,]+\s+(?<method>\w+)\s*\(", ["**/*.cs"],
-            "[HttpPost] public ... Action(...) — 웹 API 서버"),
+            "[HttpPost] public ... Action(...) — 웹 API 서버", Kind: EntryKind.Packet),
         new("Handle 로 시작하는 메서드", @"^[ \t]*(?:(?:public|internal|private|protected|static|async|override|virtual)\s+)+[\w<>\[\]?.,]+\s+(?<method>Handle\w+)\s*\(", ["**/*.cs"],
-            "등록 코드를 못 찾을 때 쓰는 넓은 규칙: HandleXxx 메서드 정의 전부"),
+            "등록 코드를 못 찾을 때 쓰는 넓은 규칙: HandleXxx 메서드 정의 전부", Kind: EntryKind.Packet),
         new("시작 함수", @"\bstatic\s+(?:async\s+)?(?:void|int|Task(?:<int>)?)\s+(?<method>Main)\s*\(", ["**/*.cs"],
-            "static void Main(...) — 시작 순서를 흐름 요약으로 본다(최상위 문(top-level statements)은 아직 못 잡음)"),
+            "static void Main(...) — 시작 순서를 흐름 요약으로 본다(최상위 문(top-level statements)은 아직 못 잡음)", Kind: EntryKind.Start),
     ];
 
     // C# 패킷 모양(PacketId.X, case PacketId.X). C++ 기본값은 PacketId::X 라 C# 대상에는 이것을 쓴다.

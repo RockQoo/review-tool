@@ -1,9 +1,10 @@
 namespace ReviewTool.Core;
 
 // 폴더를 보고 만든 설정 제안(언어 어댑터의 감지기가 채운다). 화면·명령줄 init 이 보여 주고 저장한다.
-public sealed record EntryPreset(string Name, string Pattern, List<string> Files, string Description, bool Macro = false)
+public sealed record EntryPreset(string Name, string Pattern, List<string> Files, string Description, bool Macro = false,
+                                 string? Kind = null)
 {
-    public EntryPointRule ToRule() => new() { Name = Name, Pattern = Pattern, Files = [.. Files], Macro = Macro };
+    public EntryPointRule ToRule() => new() { Name = Name, Pattern = Pattern, Files = [.. Files], Macro = Macro, Kind = Kind };
 }
 
 public sealed class DetectedPreset(EntryPreset preset, int matches, List<string> samples)
