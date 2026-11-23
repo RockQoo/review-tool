@@ -260,9 +260,18 @@
                     {
                         @foreach (var cls in folder.GroupBy(e => EntryClass(e.Group)))
                         {
+                            var classKey = $"{folderKey} / {cls.Key}";
+                            var classOpen = cls.Key.Length == 0 || IsClassOpen(classKey);
                             @if (cls.Key.Length > 0)
                             {
-                                <div class="group cls">@cls.Key</div>
+                                <button class="group cls" aria-expanded="@(classOpen ? "true" : "false")" @onclick="() => ToggleClass(classKey)"
+                                        title="@(classOpen ? "접기" : "펼치기")">
+                                    <span class="caret">@(classOpen ? "▾" : "▸")</span>@cls.Key<span class="count">@cls.Count()</span>
+                                </button>
+                            }
+                            @if (!classOpen)
+                            {
+                                continue;
                             }
                             @foreach (var e in cls)
                             {
@@ -1745,6 +1754,19 @@
         if (!collapsedFolders.Remove(folder))
         {
             collapsedFolders.Add(folder);
+        }
+    }
+
+    // 접은 클래스(열쇠 = 묶음 이름 "폴더 / 클래스"). 기본은 펼침, 검색 중에는 모두 펼침.
+    private readonly HashSet<string> collapsedClasses = new(StringComparer.Ordinal);
+
+    private bool IsClassOpen(string classKey) => entryFilter.Trim().Length > 0 || !collapsedClasses.Contains(classKey);
+
+    private void ToggleClass(string classKey)
+    {
+        if (!collapsedClasses.Remove(classKey))
+        {
+            collapsedClasses.Add(classKey);
         }
     }
 
