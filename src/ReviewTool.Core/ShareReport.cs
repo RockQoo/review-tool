@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -38,9 +39,9 @@ public static class ShareReport
 
         var sb = new StringBuilder();
         sb.Append("# 흐름 보고서: ").Append(graph.TargetName).Append("\n\n");
-        sb.Append("- 분석: ").Append(graph.AnalyzedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")).Append(" · 언어 ").Append(graph.Language)
+        sb.Append("- 분석: ").Append(graph.AnalyzedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)).Append(" · 언어 ").Append(graph.Language)
           .Append(" · 진입점 ").Append(graph.EntryPoints.Count).Append(" · 함수 ").Append(graph.Nodes.Count).Append(" · 호출 ").Append(graph.Edges.Count).Append('\n');
-        sb.Append("- 이 보고서: 진입점 ").Append(shown.Count).Append("개")
+        sb.Append("- 이 보고서: 진입점 ").Append(shown.Count).Append('개')
           .Append(entries.Count > shown.Count ? $" (전체 {entries.Count}개 중 앞 {shown.Count}개)" : "")
           .Append(" · 소스 본문 ").Append(options.IncludeSource ? "포함" : "뺌")
           .Append(" · 절대 경로 ").Append(options.IncludeAbsolutePaths ? "포함" : "뺌").Append('\n');
@@ -113,7 +114,7 @@ public static class ShareReport
                 var mine = checks.Findings.Where(f => f.Entries.Contains(entry.NodeId)).ToList();
                 if (mine.Count > 0)
                 {
-                    sb.Append("\n### 점검 지적 ").Append(mine.Count).Append("개")
+                    sb.Append("\n### 점검 지적 ").Append(mine.Count).Append('개')
                       .Append(mine.Count > MaxFindingsShown ? $" (앞 {MaxFindingsShown}개만)" : "").Append("\n\n");
                     AppendFindings(sb, mine, options.IncludeSource);
                 }
@@ -192,7 +193,7 @@ public static class ShareReport
 
     private const int MaxFindingsShown = 50;
 
-    private static void AppendFindings(StringBuilder sb, IReadOnlyList<Checks.Finding> findings, bool includeSource)
+    private static void AppendFindings(StringBuilder sb, List<Checks.Finding> findings, bool includeSource)
     {
         foreach (var f in findings.Take(MaxFindingsShown))
         {

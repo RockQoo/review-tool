@@ -14,7 +14,7 @@ public sealed class EditorLauncher(ILogger<EditorLauncher> logger)
 
     public string? Open(string editorId, string file, int line)
     {
-        var editor = Available.FirstOrDefault(e => e.Id == editorId) ?? Available.FirstOrDefault();
+        var editor = Available.FirstOrDefault(e => e.Id == editorId) ?? (Available.Count > 0 ? Available[0] : null);
         if (editor is null)
         {
             return "Visual Studio 나 VS Code 를 찾지 못했습니다.";

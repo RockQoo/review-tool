@@ -209,7 +209,7 @@ public static partial class CompileDatabase
 
         private static IEnumerable<string> Split(string? value) =>
             (value ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(v => !v.StartsWith("%("));
+                .Where(v => !v.StartsWith("%(", StringComparison.Ordinal));
 
         private static Dictionary<string, string> BuildMacros(string projectPath, string projectDir, TargetConfig config)
         {

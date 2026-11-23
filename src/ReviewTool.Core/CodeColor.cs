@@ -7,6 +7,8 @@ namespace ReviewTool.Core;
 // 컴파일러가 아니라 눈으로 읽기 편하게 하는 것이 목적이라 매크로·템플릿 등에서 틀릴 수 있다(코드 글자는 그대로다).
 public static class CodeColor
 {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1720:Identifier contains type name",
+        Justification = "토큰 종류 '문자열'을 뜻하며 이름이 CSS 클래스 tk-string 으로 쓰인다")]
     public enum Kind { Plain, Keyword, String, Comment, Number, Preprocessor }
 
     public sealed record Token(string Text, Kind Kind);

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -181,7 +182,7 @@ public sealed class LspClient : IAsyncDisposable
                 const string prefix = "Content-Length:";
                 if (text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 {
-                    length = int.Parse(text[prefix.Length..].Trim());
+                    length = int.Parse(text[prefix.Length..].Trim(), CultureInfo.InvariantCulture);
                 }
             }
             else

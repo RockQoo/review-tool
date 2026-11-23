@@ -177,7 +177,7 @@ internal sealed class RoslynWalker(TargetConfig config, TraceGraph graph, Projec
         _ => expr,
     };
 
-    private SyntaxNode? Declaration(IMethodSymbol symbol) =>
+    private static SyntaxNode? Declaration(IMethodSymbol symbol) =>
         symbol.DeclaringSyntaxReferences.Select(r => r.GetSyntax())
             .FirstOrDefault(s => s is BaseMethodDeclarationSyntax { Body: not null } or BaseMethodDeclarationSyntax { ExpressionBody: not null }
                                      or LocalFunctionStatementSyntax or AccessorDeclarationSyntax)

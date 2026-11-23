@@ -109,7 +109,7 @@ public sealed class McpServer(McpTools tools, TextReader input, TextWriter outpu
         {
             text = tools.Call(name, args);
         }
-        catch (ToolError ex)
+        catch (ToolException ex)
         {
             text = ex.Message;
             isError = true;
@@ -138,4 +138,4 @@ public sealed class McpServer(McpTools tools, TextReader input, TextWriter outpu
 }
 
 // 도구 결과로 돌려줄 사용자 오류(대상 없음, 함수 못 찾음 등). 프로토콜 오류가 아니다.
-public sealed class ToolError(string message) : Exception(message);
+public sealed class ToolException(string message) : Exception(message);

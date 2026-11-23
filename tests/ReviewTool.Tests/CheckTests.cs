@@ -313,11 +313,11 @@ public class CheckTests
         var g = new G()
             .Node("F", "Net::Hub::Once", "Core/Hub.cpp", 1, "void Once()\n{\n" + line + "\n}")
             .Node("S", "Net::Session::Send", "Core/Session.cpp", 40, "void Send() {}")
-            .Sites("F", "S", (3, line.IndexOf("Send(a)")), (3, line.IndexOf("Send(b)")), (3, line.IndexOf("Send(c)")));
+            .Sites("F", "S", (3, line.IndexOf("Send(a)", StringComparison.Ordinal)), (3, line.IndexOf("Send(b)", StringComparison.Ordinal)), (3, line.IndexOf("Send(c)", StringComparison.Ordinal)));
 
         var f = Assert.Single(g.Run(Rule(Checks.ForbidInScope)).Findings);
 
-        Assert.Equal([line.IndexOf("Send(b)")], f.Evidence.Select(e => e.Site.Column));
+        Assert.Equal([line.IndexOf("Send(b)", StringComparison.Ordinal)], f.Evidence.Select(e => e.Site.Column));
     }
 
     [Fact]

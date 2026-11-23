@@ -74,7 +74,7 @@ internal sealed class ProjectSet
                 }
             }
             var own = (byProject.GetValueOrDefault(dir) ?? []).Select(f => trees[f]).ToList();
-            var all = own.Append(CSharpSyntaxTree.ParseText(ImplicitUsings, parse, path: "")).ToList();
+            var all = own.Append(CSharpSyntaxTree.ParseText(ImplicitUsings, parse, path: "", cancellationToken: ct)).ToList();
             var mine = projects.GetValueOrDefault(dir) ?? [];
             var name = mine.Count == 0 ? "loose" : Path.GetFileNameWithoutExtension(mine[0]);
             var compilation = CSharpCompilation.Create(name, all, refs,

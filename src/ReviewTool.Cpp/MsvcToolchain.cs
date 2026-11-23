@@ -9,6 +9,9 @@ public sealed record MsvcToolchain(string ToolsVersion, IReadOnlyList<string> Sy
     // 14.51 -> 19.51 (_MSC_VER 흉내)
     public string CompatibilityVersion => ToolsVersion.Split('.') is [_, var minor, ..] ? $"19.{minor}" : "19.40";
 
+    // Windows SDK include 아래에서 넘길 하위 폴더
+    private static readonly string[] SdkIncludeFolders = ["ucrt", "um", "shared", "winrt", "cppwinrt"];
+
     public static MsvcToolchain? Detect(List<string> diagnostics)
     {
         if (!OperatingSystem.IsWindows())
@@ -55,7 +58,7 @@ public sealed record MsvcToolchain(string ToolsVersion, IReadOnlyList<string> Sy
                 .FirstOrDefault();
             if (sdk is not null)
             {
-                includes.AddRange(new[] { "ucrt", "um", "shared", "winrt", "cppwinrt" }
+                includes.AddRange(SdkIncludeFolders
                     .Select(s => Path.Combine(sdk, s)).Where(Directory.Exists));
             }
         }

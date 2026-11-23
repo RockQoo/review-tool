@@ -1,0 +1,11 @@
+<Project>
+
+  <!-- 경고 정책: 권장 분석 규칙을 켜고 경고를 모두 오류로 다룬다. 끈 규칙과 이유는 .editorconfig 에 있다.
+       tests/ReviewTool.Tests/Fixtures 아래는 분석 대상 예제라 제품처럼 빌드하지 않으므로 적용하지 않는다. -->
+  <PropertyGroup Condition="!$(MSBuildProjectDirectory.Replace('\', '/').Contains('/tests/ReviewTool.Tests/Fixtures/'))">
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <MSBuildTreatWarningsAsErrors>true</MSBuildTreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

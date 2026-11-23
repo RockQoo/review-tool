@@ -13,7 +13,7 @@ public enum AiEventKind
 public sealed record AiEvent(AiEventKind Kind, string Text);
 
 // AI CLI 의 JSON 줄 출력을 화면용 이벤트로. 모르는 줄은 무시한다(CLI 버전이 바뀌어도 깨지지 않게).
-public static class AiStream
+public static class AiStreamParser
 {
     // claude -p --output-format stream-json --verbose --include-partial-messages
     public static IEnumerable<AiEvent> ParseClaude(string line)

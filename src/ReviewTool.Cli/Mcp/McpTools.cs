@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
 using ReviewTool.Core;
@@ -89,7 +90,7 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
 
     public string Call(string name, JsonObject args)
     {
-        var tool = Tools.FirstOrDefault(t => t.Name == name) ?? throw new ToolError($"없는 도구: {name}");
+        var tool = Tools.FirstOrDefault(t => t.Name == name) ?? throw new ToolException($"없는 도구: {name}");
         return tool.Run(args);
     }
 
@@ -121,7 +122,7 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
             {
                 loaded = TryGraph(name);
             }
-            catch (ToolError ex)
+            catch (ToolException ex)
             {
                 sb.Append("- ").Append(ex.Message).Append("\n\n");
                 continue;
@@ -132,7 +133,7 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
                 continue;
             }
             var g = loaded.Value.Graph;
-            sb.Append("- 언어 ").Append(g.Language).Append(" · 분석 ").Append(g.AnalyzedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))
+            sb.Append("- 언어 ").Append(g.Language).Append(" · 분석 ").Append(g.AnalyzedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture))
               .Append(" · 진입점 ").Append(g.EntryPoints.Count).Append(" · 함수 ").Append(g.Nodes.Count).Append(" · 호출 ").Append(g.Edges.Count).Append('\n');
             sb.Append("- 신선도: ").Append(FreshnessText(config, g)).Append('\n');
             var snaps = SnapshotStore.List(Paths(config));
@@ -253,12 +254,12 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
         {
             var start = Resolve(t.G, entry);
             path = TraceQueries.PathFrom(t.G, t.I, start.Id, target.Id)
-                   ?? throw new ToolError($"{start.Name} 에서 {target.Name} 까지 가는 호출 경로가 분석 결과에 없습니다.");
+                   ?? throw new ToolException($"{start.Name} 에서 {target.Name} 까지 가는 호출 경로가 분석 결과에 없습니다.");
         }
         else
         {
             var hit = ImpactAnalyzer.Analyze(t.G, target.Id).Entries.OrderBy(e => e.Path.Count).FirstOrDefault()
-                      ?? throw new ToolError($"{target.Name} 에 닿는 진입점을 찾지 못했습니다.");
+                      ?? throw new ToolException($"{target.Name} 에 닿는 진입점을 찾지 못했습니다.");
             path = [.. hit.Path];
         }
         return FlowContext.ToMarkdown(t.G, path, new FlowContext.Options { IncludeCode = includeCode });
@@ -293,7 +294,7 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
         }
         if (byLabel.Count > 1)
         {
-            throw new ToolError($"이 이름의 진입점이 {byLabel.Count}개입니다. id 로 고르세요:\n" +
+            throw new ToolException($"이 이름의 진입점이 {byLabel.Count}개입니다. id 로 고르세요:\n" +
                                 string.Join('\n', byLabel.Select(e => $"- {e.Label} · {e.Group}  id={e.NodeId}")));
         }
         return Resolve(g, query);
@@ -343,7 +344,7 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
         sb.Append("\n## 클래스 사이 호출 (많은 순, 최대 100)\n");
         foreach (var l in calls)
         {
-            sb.Append("- ").Append(l.From).Append(" → ").Append(l.To).Append("  ").Append(l.Count).Append("곳")
+            sb.Append("- ").Append(l.From).Append(" → ").Append(l.To).Append("  ").Append(l.Count).Append('곳')
               .Append(l.Kind == "guess" ? " (추정 연결)" : "").Append('\n');
         }
         return sb.ToString();
@@ -353,7 +354,7 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
     {
         if (t.G.Types.Count == 0)
         {
-            throw new ToolError("이 분석 결과에는 클래스 정보가 없습니다. 재분석하면 생깁니다.");
+            throw new ToolException("이 분석 결과에는 클래스 정보가 없습니다. 재분석하면 생깁니다.");
         }
         var q = name.Trim();
         var found = t.G.Types.Where(x => x.Name == q).ToList();
@@ -400,7 +401,7 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
         var rules = config.Checks.Where(r => rule is null || r.Name == rule).ToList();
         if (rules.Count == 0)
         {
-            throw new ToolError(rule is null ? "대상 설정에 점검 규칙(checks)이 없습니다."
+            throw new ToolException(rule is null ? "대상 설정에 점검 규칙(checks)이 없습니다."
                 : $"규칙 {rule} 이 없습니다. 있는 규칙: {string.Join(", ", config.Checks.Select(r => r.Name))}");
         }
         var report = Checks.Run(rules, t.G, t.I, Checks.ReadFrom(config.Root));
@@ -418,11 +419,11 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
     {
         var config = LoadConfig(t.G.TargetName);
         var before = SnapshotStore.Load(Paths(config), baseline)
-                     ?? throw new ToolError($"기준 {baseline} 이 없습니다. list_targets 의 비교 기준을 보세요.");
+                     ?? throw new ToolException($"기준 {baseline} 이 없습니다. list_targets 의 비교 기준을 보세요.");
         var r = SnapshotComparer.Compare(before, t.G);
         var sb = new StringBuilder();
-        sb.Append("기준 ").Append(baseline).Append(" (").Append(before.AnalyzedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")).Append(") → 지금 (")
-          .Append(t.G.AnalyzedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")).Append(")\n");
+        sb.Append("기준 ").Append(baseline).Append(" (").Append(before.AnalyzedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)).Append(") → 지금 (")
+          .Append(t.G.AnalyzedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)).Append(")\n");
         foreach (var w in r.ConditionWarnings)
         {
             sb.Append("! ").Append(w).Append('\n');
@@ -477,7 +478,7 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
     {
         if (!TargetNames().Contains(name))
         {
-            throw new ToolError($"대상 {name} 이 없습니다. 있는 대상: {string.Join(", ", TargetNames())}");
+            throw new ToolException($"대상 {name} 이 없습니다. 있는 대상: {string.Join(", ", TargetNames())}");
         }
         return TargetConfig.Load(Path.Combine(targetsDirectory, name + ".json"));
     }
@@ -564,7 +565,7 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
         // 설정의 root 를 다른 저장소로 바꾼 뒤 재분석 전이면, 옛 저장소의 결과를 이 대상의 것으로 내주지 않는다
         if (!SameRoot(graph.RootDirectory, config.Root))
         {
-            throw new ToolError($"대상 {name} 의 설정 폴더({config.Root})와 분석 결과의 폴더({graph.RootDirectory})가 다릅니다. 재분석이 필요합니다.");
+            throw new ToolException($"대상 {name} 의 설정 폴더({config.Root})와 분석 결과의 폴더({graph.RootDirectory})가 다릅니다. 재분석이 필요합니다.");
         }
         return (graph, index!);
     }
@@ -585,7 +586,7 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
     private (TraceGraph G, TraceIndex I) Target(JsonObject a)
     {
         var name = Req(a, "target");
-        return TryGraph(name) ?? throw new ToolError($"대상 {name} 의 분석 결과가 없습니다. 먼저 분석하세요.");
+        return TryGraph(name) ?? throw new ToolException($"대상 {name} 의 분석 결과가 없습니다. 먼저 분석하세요.");
     }
 
     private static TraceNode Resolve(TraceGraph g, string function)
@@ -593,10 +594,10 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
         var found = TraceQueries.FindFunctions(g, function, 20);
         return found.Count switch
         {
-            0 => throw new ToolError($"함수 {function} 을(를) 찾지 못했습니다. find_functions 로 찾아 보세요."),
+            0 => throw new ToolException($"함수 {function} 을(를) 찾지 못했습니다. find_functions 로 찾아 보세요."),
             1 => found[0],
             // FindFunctions 는 이름이 정확히 같은 것이 있으면 그것만 준다: 여럿이면 오버로드나 파일별 static 함수
-            _ => throw new ToolError($"{function} 에 맞는 함수가 여러 개입니다. id 로 지정하세요:\n" +
+            _ => throw new ToolException($"{function} 에 맞는 함수가 여러 개입니다. id 로 지정하세요:\n" +
                                       string.Join('\n', found.Select(n => $"- {n.Name}  {n.File}:{n.StartLine}  id={n.Id}"))),
         };
     }
@@ -626,7 +627,7 @@ public sealed class McpTools(string targetsDirectory, string dataRoot)
     private static string? Opt(JsonObject a, string key) =>
         a[key] is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s) ? s.Trim() : null;
 
-    private static string Req(JsonObject a, string key) => Opt(a, key) ?? throw new ToolError($"{key} 인자가 필요합니다.");
+    private static string Req(JsonObject a, string key) => Opt(a, key) ?? throw new ToolException($"{key} 인자가 필요합니다.");
 
     private static int? Int(JsonObject a, string key) =>
         a[key] is JsonValue v ? v.TryGetValue<int>(out var i) ? i : v.TryGetValue<double>(out var d) ? (int)d

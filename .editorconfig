@@ -1,0 +1,9 @@
+# 분석 규칙 조정(경고 정책은 Directory.Build.props). 끄는 규칙은 범위를 가장 좁게 잡고 이유를 적는다.
+
+[src/ReviewTool.Web/**.cs]
+# CA1848(LoggerMessage 대리자): 도구라 로그가 성능 경로가 아니다
+dotnet_diagnostic.CA1848.severity = none
+
+[tests/ReviewTool.Tests/**.cs]
+# CA1707(이름의 밑줄): 테스트 이름은 메서드_상황_결과 형식이다
+dotnet_diagnostic.CA1707.severity = none

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace ReviewTool.Core;
@@ -68,8 +69,8 @@ public static partial class GitChanges
             }
             else if (file is not null && HunkHeader().Match(line) is { Success: true } m)
             {
-                var start = int.Parse(m.Groups["start"].Value);
-                var count = m.Groups["count"].Success ? int.Parse(m.Groups["count"].Value) : 1;
+                var start = int.Parse(m.Groups["start"].Value, CultureInfo.InvariantCulture);
+                var count = m.Groups["count"].Success ? int.Parse(m.Groups["count"].Value, CultureInfo.InvariantCulture) : 1;
                 hunks.Add(count == 0
                     ? new Hunk(file, Math.Max(1, start + 1), Math.Max(1, start + 1), true)
                     : new Hunk(file, start, start + count - 1, false));

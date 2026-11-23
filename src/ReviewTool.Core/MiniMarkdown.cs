@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -111,7 +112,7 @@ public static partial class MiniMarkdown
             sb.Append(encoded);
         }
         var html = Bold().Replace(sb.ToString(), "<b>$1</b>");
-        return CodeSlot().Replace(html, m => codes[int.Parse(m.Groups[1].Value)]);
+        return CodeSlot().Replace(html, m => codes[int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)]);
     }
 
     [GeneratedRegex("\u0001(\\d+)\u0002")]

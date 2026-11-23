@@ -1,10 +1,11 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using ReviewTool.Cli.Mcp;
 using ReviewTool.Core;
 
 namespace ReviewTool.Tests;
 
-// 2단계: 문맥 복사(FlowContext), 조회(TraceQueries), AI CLI 출력 해석(AiStream), MCP 서버.
+// 2단계: 문맥 복사(FlowContext), 조회(TraceQueries), AI CLI 출력 해석(AiStreamParser), MCP 서버.
 public class AiLinkTests
 {
     // E(진입점) → A → B(등록 연결, 추정) , A → ext:std::x(범위 밖), A → A(재귀)
@@ -148,7 +149,7 @@ public class AiLinkTests
         var groups = TraceQueries.GroupByLine(children);
 
         Assert.Equal(["42:Move,Write,RequestMove", "-:Set", "50:A,B", "-:Push", "-:OnPush", "-:NoSite"],
-                     groups.Select(g => $"{g.Line?.ToString() ?? "-"}:{string.Join(",", g.Edges.Select(e => e.To))}"));
+                     groups.Select(g => $"{g.Line?.ToString(CultureInfo.InvariantCulture) ?? "-"}:{string.Join(",", g.Edges.Select(e => e.To))}"));
         Assert.Empty(TraceQueries.GroupByLine([]));
     }
 
@@ -165,13 +166,13 @@ public class AiLinkTests
             "깨진 줄",
             "{깨진 json",
         };
-        var events = lines.SelectMany(AiStream.ParseClaude).ToList();
+        var events = lines.SelectMany(AiStreamParser.ParseClaude).ToList();
 
         Assert.Equal(
             [new AiEvent(AiEventKind.Text, "안녕"), new AiEvent(AiEventKind.Tool, "Read: src/a.cpp"), new AiEvent(AiEventKind.Done, "")],
             events);
         Assert.Equal(AiEventKind.Error,
-            AiStream.ParseClaude("""{"type":"result","is_error":true,"result":"한도 초과"}""").Single().Kind);
+            AiStreamParser.ParseClaude("""{"type":"result","is_error":true,"result":"한도 초과"}""").Single().Kind);
     }
 
     [Fact]
@@ -185,12 +186,12 @@ public class AiLinkTests
             """{"type":"item.completed","item":{"id":"i2","type":"agent_message","text":"답"}}""",
             """{"type":"turn.completed","usage":{}}""",
         };
-        var events = lines.SelectMany(AiStream.ParseCodex).ToList();
+        var events = lines.SelectMany(AiStreamParser.ParseCodex).ToList();
 
         Assert.Equal(
             [new AiEvent(AiEventKind.Tool, "명령: rg Foo"), new AiEvent(AiEventKind.Text, "답\n\n"), new AiEvent(AiEventKind.Done, "")],
             events);
-        Assert.Equal("막힘", AiStream.ParseCodex("""{"type":"turn.failed","error":{"message":"막힘"}}""").Single().Text);
+        Assert.Equal("막힘", AiStreamParser.ParseCodex("""{"type":"turn.failed","error":{"message":"막힘"}}""").Single().Text);
     }
 
     [Fact]

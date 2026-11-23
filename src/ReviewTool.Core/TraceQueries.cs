@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace ReviewTool.Core;
@@ -269,13 +270,13 @@ public static class TraceQueries
             }
         }
         var lines = node.Code.Split('\n');
-        var width = (node.StartLine + lines.Length).ToString().Length;
+        var width = (node.StartLine + lines.Length).ToString(CultureInfo.InvariantCulture).Length;
         var sb = new StringBuilder();
         for (var i = 0; i < lines.Length; i++)
         {
             var no = node.StartLine + i;
             sb.Append(highlight?.Contains(no) == true ? '>' : ' ')
-              .Append(no.ToString().PadLeft(width)).Append(" | ").Append(lines[i].TrimEnd('\r'));
+              .Append(no.ToString(CultureInfo.InvariantCulture).PadLeft(width)).Append(" | ").Append(lines[i].TrimEnd('\r'));
             if (calls.TryGetValue(no, out var names))
             {
                 sb.Append("    // → ").Append(string.Join(", ", names));

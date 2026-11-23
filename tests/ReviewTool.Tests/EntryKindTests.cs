@@ -83,7 +83,7 @@ public class EntryKindTests
                     public void HandleTick() { }
                 }
                 """);
-            var handle = CSharpTargetDetector.Presets.Single(p => p.Name.StartsWith("Handle")).ToRule();
+            var handle = CSharpTargetDetector.Presets.Single(p => p.Name.StartsWith("Handle", StringComparison.Ordinal)).ToRule();
             var config = new TargetConfig { Name = "k", Root = root, Language = "csharp", EntryPoints = [handle], Channels = [Lane] };
 
             var graph = await new CSharpTraceAnalyzer().AnalyzeAsync(config, new WorkPaths(data, "k"), null, CancellationToken.None);
@@ -133,7 +133,7 @@ public class EntryKindTests
                 {
                 }
                 """);
-            var handle = CppTargetDetector.Presets.Single(p => p.Name.StartsWith("Handle")).ToRule();
+            var handle = CppTargetDetector.Presets.Single(p => p.Name.StartsWith("Handle", StringComparison.Ordinal)).ToRule();
             var config = new TargetConfig
             {
                 Name = "k",

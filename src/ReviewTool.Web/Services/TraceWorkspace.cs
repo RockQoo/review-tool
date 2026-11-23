@@ -5,7 +5,7 @@ namespace ReviewTool.Web.Services;
 
 // 대상 목록, 저장된 분석 결과, 진행 중인 재분석을 들고 있는 싱글턴.
 // 분석은 한 번에 하나만 돈다(clangd 가 무겁다).
-public sealed class TraceWorkspace(IConfiguration configuration, IWebHostEnvironment environment, ILogger<TraceWorkspace> logger)
+public sealed class TraceWorkspace(IConfiguration configuration, IWebHostEnvironment environment, ILogger<TraceWorkspace> logger) : IDisposable
 {
     private readonly object lock_ = new();
     private readonly Dictionary<string, TraceGraph> graphs_ = [];
@@ -299,6 +299,17 @@ public sealed class TraceWorkspace(IConfiguration configuration, IWebHostEnviron
         lock (lock_)
         {
             running_?.Cancel();
+        }
+    }
+
+    // 앱이 끝날 때(싱글턴 정리) 돌던 분석을 멈추고 토큰 소스를 놓는다.
+    public void Dispose()
+    {
+        lock (lock_)
+        {
+            running_?.Cancel();
+            running_?.Dispose();
+            running_ = null;
         }
     }
 

@@ -8,6 +8,9 @@ public class CSharpAdapterTests
 {
     private static string Fixture => Path.Combine(AppContext.BaseDirectory, "Fixtures", "csharp");
 
+    // main 이 부르는 함수
+    private static readonly string[] MainCalls = ["Game::Server::Config::Load", "Game::Common::Dispatcher::Register", "Game::Server::LoginHandler::LoginHandler"];
+
     [Fact]
     public void 폴더를_보고_CSharp_설정을_제안한다()
     {
@@ -52,18 +55,18 @@ public class CSharpAdapterTests
         var calls = index.ChildrenOf(login.Id).Select(e => g.Nodes[e.To].Name).ToList();
         Assert.Equal(["Game::Common::IRepository::Load", "Game::Common::Session::Send", "System::Collections::Generic::List::ForEach",
                       "Game::Common::Audit::Write"], calls);                       // 소스 순서, 람다 안 호출 포함
-        var send = index.ChildrenOf(login.Id).Single(e => g.Nodes[e.To].Name.EndsWith("Session::Send"));
+        var send = index.ChildrenOf(login.Id).Single(e => g.Nodes[e.To].Name.EndsWith("Session::Send", StringComparison.Ordinal));
         Assert.Equal((16, 20), (send.CallSites[0].Line, send.CallSites[0].Column));   // 메서드 이름 위치(열은 0부터)
 
         // 인터페이스 메서드: 구현 후보(Roslyn 상속 정보), 바깥 라이브러리: 외부
         var load = g.Nodes.Values.Single(n => n.Name == "Game::Common::IRepository::Load");
         Assert.Equal(StopReason.NoDefinition, load.Stop);
         Assert.Equal(["Game::Server::SqlRepository::Load"], load.Implementations.Select(i => i.Name));
-        Assert.Equal(StopReason.External, g.Nodes.Values.Single(n => n.Name.EndsWith("List::ForEach")).Stop);
+        Assert.Equal(StopReason.External, g.Nodes.Values.Single(n => n.Name.EndsWith("List::ForEach", StringComparison.Ordinal)).Stop);
 
         // main: 설정 → 생성자 → 등록(주소만 넘긴 HandleLogin 은 호출이 아니다)
         var main = g.Nodes[g.EntryPoints[1].NodeId];
-        Assert.Equal(new[] { "Game::Server::Config::Load", "Game::Common::Dispatcher::Register", "Game::Server::LoginHandler::LoginHandler" }.Order(),   // SqlRepository 의 기본 생성자는 컴파일러가 만든 것이라 뺀다
+        Assert.Equal(MainCalls.Order(),   // SqlRepository 의 기본 생성자는 컴파일러가 만든 것이라 뺀다
                      index.ChildrenOf(main.Id).Select(e => g.Nodes[e.To].Name).Where(n => !n.StartsWith("ext", StringComparison.Ordinal)).Order());
     }
 

@@ -84,9 +84,11 @@ public sealed class AiAssistant(ILogger<AiAssistant> logger)
         }
     }
 
-    private async Task PumpAsync(Process process, string prompt, Provider provider, ChannelWriter<AiEvent> writer,
+    private static async Task PumpAsync(Process process, string prompt, Provider provider, ChannelWriter<AiEvent> writer,
                                  Queue<string> stderr, CancellationToken ct)
     {
+        // 취소는 프로세스를 끝내는 것(reg)으로 처리한다. 작업 시작·출력 읽기에 토큰을 넘기면 취소 예외가 나서
+        // 아래의 "중단했습니다." 알림과 정리 순서가 깨지므로 일부러 CancellationToken.None 을 넘긴다.
         using var reg = ct.Register(() => Kill(process));
         var errTask = Task.Run(async () =>
         {
@@ -101,7 +103,7 @@ public sealed class AiAssistant(ILogger<AiAssistant> logger)
                     }
                 }
             }
-        });
+        }, CancellationToken.None);
         var finished = false;
         // 입력 쓰기와 출력 읽기를 함께 진행한다. 입력(문맥)이 파이프보다 크고 CLI 가 먼저 출력을 채우면
         // 순서대로 하면 서로 기다리며 멈춘다.
@@ -125,10 +127,10 @@ public sealed class AiAssistant(ILogger<AiAssistant> logger)
                 {
                 }
             }
-        });
+        }, CancellationToken.None);
         try
         {
-            while (await process.StandardOutput.ReadLineAsync() is { } line)
+            while (await process.StandardOutput.ReadLineAsync(CancellationToken.None) is { } line)
             {
                 foreach (var ev in provider.Parse(line))
                 {
@@ -197,7 +199,7 @@ public sealed class AiAssistant(ILogger<AiAssistant> logger)
                 "--tools", "Read,Grep,Glob",          // 읽기 도구만
                 "--strict-mcp-config",                // 사용자 MCP 서버는 붙이지 않는다
                 "--no-session-persistence",
-            ], AiStream.ParseClaude));
+            ], AiStreamParser.ParseClaude));
         }
 
         // codex 는 npm 래퍼(codex.cmd)라 cmd 를 거치지 않게 node 로 스크립트를 직접 실행한다.
@@ -210,12 +212,12 @@ public sealed class AiAssistant(ILogger<AiAssistant> logger)
             if (OperatingSystem.IsWindows() && File.Exists(script) && node is not null)
             {
                 list.Add(new Provider("codex", "Codex", node,
-                    [script, "exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check", "-"], AiStream.ParseCodex));
+                    [script, "exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check", "-"], AiStreamParser.ParseCodex));
             }
             else if (!OperatingSystem.IsWindows())
             {
                 list.Add(new Provider("codex", "Codex", codexCmd,
-                    ["exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check", "-"], AiStream.ParseCodex));
+                    ["exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check", "-"], AiStreamParser.ParseCodex));
             }
         }
         return list;

@@ -23,7 +23,7 @@ public class TargetDetectorTests
         Assert.Contains("Handler::HandleMove", register.Samples);
 
         // 구체적인 규칙이 맞으면 넓은 Handle* 규칙은 켜지 않는다
-        Assert.False(s.Presets.Single(p => p.Preset.Name.StartsWith("Handle")).Enabled);
+        Assert.False(s.Presets.Single(p => p.Preset.Name.StartsWith("Handle", StringComparison.Ordinal)).Enabled);
         Assert.Single(s.Config.EntryPoints);
     }
 

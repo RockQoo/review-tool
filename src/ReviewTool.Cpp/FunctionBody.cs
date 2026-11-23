@@ -74,7 +74,6 @@ public static partial class FunctionBody
             }
             line++;
             col = 0;
-            state.EndLine();
         }
         return new Span(start + 1, nameLine0 + 1, false);
     }
@@ -203,7 +202,7 @@ public static partial class FunctionBody
         {
             var prev = lines[start - 1].Trim();
             if (prev.Length == 0 || prev.EndsWith(';') || prev.EndsWith('}') || prev.EndsWith('{') ||
-                prev.StartsWith("//") || prev.StartsWith('#') || prev.EndsWith("*/") || prev.EndsWith(':'))
+                prev.StartsWith("//", StringComparison.Ordinal) || prev.StartsWith('#') || prev.EndsWith("*/", StringComparison.Ordinal) || prev.EndsWith(':'))
             {
                 break;
             }
@@ -239,7 +238,6 @@ public static partial class FunctionBody
             }
             line++;
             col = 0;
-            state.EndLine();
         }
         return (-1, -1);
     }
@@ -269,10 +267,6 @@ public static partial class FunctionBody
     private struct ScanState
     {
         private bool inBlockComment_;
-
-        public void EndLine()
-        {
-        }
 
         // 건너뛸 문자면 col 을 그 끝으로 옮기고 true.
         public bool Skip(string text, ref int col)

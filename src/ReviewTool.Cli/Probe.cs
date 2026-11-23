@@ -1,3 +1,4 @@
+using System.Globalization;
 using ReviewTool.Core;
 using ReviewTool.Cpp;
 
@@ -8,8 +9,8 @@ internal static class Probe
     public static async Task<int> RunAsync(TargetConfig config, WorkPaths paths, string[] args)
     {
         var file = Path.Combine(config.Root, args[2]);
-        var line = int.Parse(args[3]) - 1;
-        var col = int.Parse(args[4]);
+        var line = int.Parse(args[3], CultureInfo.InvariantCulture) - 1;
+        var col = int.Parse(args[4], CultureInfo.InvariantCulture);
         await using var session = await ClangdSession.StartAsync(ClangdSession.FindClangd(config.Cpp.Clangd), config.Root,
                                                                  paths.CompileDbDirectory, CancellationToken.None);
         await session.OpenAsync(file, CancellationToken.None);

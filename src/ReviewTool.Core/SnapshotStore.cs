@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace ReviewTool.Core;
 
 // 비교 기준 보관: data/<대상>/snapshots/
@@ -26,7 +28,7 @@ public static class SnapshotStore
 
     public static Snapshot SaveBaseline(WorkPaths paths, TraceGraph graph)
     {
-        var id = graph.AnalyzedAt.ToLocalTime().ToString("yyyyMMdd-HHmmss");
+        var id = graph.AnalyzedAt.ToLocalTime().ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         TraceStore.Save(graph, Path.Combine(Directory(paths), id + ".json"));
         return new Snapshot(id, Label(id, graph.AnalyzedAt), graph.AnalyzedAt);
     }

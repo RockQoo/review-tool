@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace ReviewTool.Core;
@@ -33,7 +34,7 @@ public static class FlowContext
         }
         sb.Append("\n\n");
         sb.Append("- 대상: ").Append(graph.TargetName).Append(" (").Append(graph.Language).Append(")\n");
-        sb.Append("- 분석 시각: ").Append(graph.AnalyzedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")).Append(" (정적 분석, review-tool)\n");
+        sb.Append("- 분석 시각: ").Append(graph.AnalyzedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)).Append(" (정적 분석, review-tool)\n");
         if (entry is not null)
         {
             sb.Append("- 진입점: ").Append(entry.Label).Append(" · ").Append(entry.Group)
