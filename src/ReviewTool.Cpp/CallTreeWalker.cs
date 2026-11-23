@@ -287,10 +287,14 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
         await session.OpenAsync(path, ct);
         try
         {
-            // 첫 줄은 매크로 줄(TEST(...))이라 건너뛴다
-            for (var line = node.StartLine + 1; line <= Math.Min(node.EndLine, lines.Length); line++)
+            for (var line = node.StartLine; line <= Math.Min(node.EndLine, lines.Length); line++)
             {
                 var code = CodeOnly(lines[line - 1]);
+                if (line == node.StartLine)
+                {
+                    // 첫 줄은 매크로 부분(TEST(...))만 지우고 그 뒤는 본다: TEST(S, N) { Foo(); } 처럼 한 줄 본문도 있다
+                    code = BlankMacroHead(code);
+                }
                 foreach (Match m in CallSite.Matches(code))
                 {
                     var at = m.Groups["at"];
@@ -304,7 +308,11 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
                         continue;
                     }
                     await QualifyAsync(item, ct);
-                    var key = item["data"]?.GetValue<string>() ?? $"{item["uri"]}|{item["name"]}";
+                    // 심볼 ID 가 없는 item(범위 밖 합성)은 정의 위치까지 넣어 가른다. 같은 헤더의 left::Send / right::Send 가
+                    // 이름만으로 합쳐지지 않게. 범위 밖 노드를 한정 이름으로 합치는 것은 AddNodeAsync 가 한다.
+                    var start = (item["selectionRange"] ?? item["range"])?["start"];
+                    var key = item["data"]?.GetValue<string>() ??
+                              $"{item["uri"]}|{start?["line"]}|{start?["character"]}|{item["name"]}";
                     if (!byCallee.TryGetValue(key, out var call))
                     {
                         // 응답 배열에 붙어 있는 노드라 복사해서 넣는다(JsonNode 는 부모를 하나만 가진다)
@@ -410,8 +418,30 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
         }
     }
 
-    // 호출처럼 보이는 곳: 이름(템플릿 인자 허용) 뒤 '(' , 또는 스트림 연산자 << >>.
-    private static readonly Regex CallSite = new(@"(?<at>\b[A-Za-z_]\w*)\s*(?:<[^<>()]*>)?\s*\(|(?<at><<|>>)", RegexOptions.Compiled);
+    // 호출처럼 보이는 곳: 이름(템플릿 인자 허용, 중첩 Box<Box<int>> 포함) 뒤 '(' , 또는 스트림 연산자 << >>.
+    // 템플릿 인자는 균형 그룹으로 < > 짝을 맞춘다. 그래서 Foo<A<B>>( 의 닫는 >> 는 이름 쪽에 먹혀 연산자로 잡히지 않는다.
+    private static readonly Regex CallSite = new(
+        @"(?<at>\b[A-Za-z_]\w*)\s*(?:<(?>[^<>()]+|<(?<d>)|>(?<-d>))*(?(d)(?!))>)?\s*\(|(?<at><<|>>)", RegexOptions.Compiled);
+
+    // 첫 줄의 매크로 부분: 첫 '(' 부터 짝이 맞는 ')' 까지와 그 앞을 지운다. 짝을 못 찾으면 줄 전체를 지운다.
+    internal static string BlankMacroHead(string code)
+    {
+        var open = code.IndexOf('(');
+        if (open < 0)
+        {
+            return new string(' ', code.Length);
+        }
+        var depth = 0;
+        for (var i = open; i < code.Length; i++)
+        {
+            depth += code[i] switch { '(' => 1, ')' => -1, _ => 0 };
+            if (depth == 0)
+            {
+                return new string(' ', i + 1) + code[(i + 1)..];
+            }
+        }
+        return new string(' ', code.Length);
+    }
     // 대문자와 _ 만으로 된 이름은 매크로(EXPECT_EQ 등)로 보고 묻지 않는다. 인자 안의 호출은 따로 잡힌다.
     private static readonly Regex MacroName = new(@"^[A-Z][A-Z0-9_]+$", RegexOptions.Compiled);
     private static readonly HashSet<string> NotACall =
@@ -443,6 +473,10 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
                     chars[i] = ' ';
                 }
             }
+            else if (c == '\'' && IsDigitSeparator(chars, i))
+            {
+                // 1'000 같은 숫자 구분자. 문자 리터럴이 아니다.
+            }
             else if (c is '"' or '\'')
             {
                 quote = c;
@@ -454,6 +488,22 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
             }
         }
         return new string(chars);
+    }
+
+    // 작은따옴표 앞 토큰이 숫자 리터럴(숫자로 시작: 1'000, 0xFF'FF, 0b1010'0101)이면 숫자 구분자다.
+    // u8'a' 처럼 글자로 시작하는 토큰 뒤라면 문자 리터럴이다.
+    private static bool IsDigitSeparator(char[] chars, int quote)
+    {
+        if (quote + 1 >= chars.Length || !char.IsAsciiHexDigit(chars[quote + 1]))
+        {
+            return false;
+        }
+        var start = quote;
+        while (start > 0 && (char.IsAsciiLetterOrDigit(chars[start - 1]) || chars[start - 1] is '\'' or '.'))
+        {
+            start--;
+        }
+        return start < quote && char.IsAsciiDigit(chars[start]);
     }
 
     private static bool InBody(JsonObject call, TraceNode node) =>
@@ -510,7 +560,8 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
                : split ? $"{qualified}@{symbol}@{rel}"
                : symbol is not null ? $"{qualified}@{symbol}"
                : $"{qualified}@{rel}:{line0 + 1}";
-        if (split)
+        // 매크로 노드는 BodyCallsAsync 가 처음부터 제 본문 호출만 만들므로 공유 심볼 후처리(간선 전체 재검색)에 넣지 않는다
+        if (split && !macroDefined)
         {
             sharedSymbol_.Add(id);
         }

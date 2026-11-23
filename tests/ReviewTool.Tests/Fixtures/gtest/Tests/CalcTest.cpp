@@ -1,4 +1,5 @@
 #include "Calc.h"
+#include "Net.h"
 
 // 진짜 gtest 없이 같은 모양만 흉내 낸다: TEST(Suite, Name) 이 클래스와 TestBody 를 만들고 뒤에 본문이 붙는다.
 #define TEST(suite, name)                                                                                              \
@@ -23,4 +24,17 @@ TEST(Calc, Streams)
     EXPECT_EQ(Twice(4), 8);
     const char* text = "Add(1, 2)";
     (void)text;
+}
+
+TEST(Calc, OneLine) { Twice(1); }
+
+TEST(Calc, Templates)
+{
+    const auto n = 1'000; (void)Count<Box<Box<int>>>(n);
+}
+
+TEST(Calc, Externals)
+{
+    left::Send();
+    right::Send();
 }

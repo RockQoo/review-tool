@@ -30,13 +30,31 @@ public class MacroEntryTests
         Assert.DoesNotContain("Baz", code);
     }
 
+    [Theory]
+    [InlineData("const auto n = 1'000; Foo(n);", "Foo(")]
+    [InlineData("auto x = 0xFF'FF; Bar();", "Bar(")]
+    public void 숫자_구분자는_문자_리터럴로_보지_않는다(string line, string kept)
+    {
+        Assert.Contains(kept, CallTreeWalker.CodeOnly(line));
+    }
+
+    [Fact]
+    public void 매크로_줄은_괄호_짝까지만_지운다()
+    {
+        var code = CallTreeWalker.BlankMacroHead("TEST(S, N) { Foo(); }");
+
+        Assert.DoesNotContain("TEST", code);
+        Assert.Contains("{ Foo(); }", code);
+        Assert.Equal(21, code.Length);
+    }
+
     [Fact]
     public void 자동_감지가_gtest_규칙을_매크로로_켠다()
     {
         var s = CppTargetDetector.Suggest(Fixture);
 
         var gtest = s.Presets.Single(p => p.Preset.Name == "gtest 테스트");
-        Assert.Equal(2, gtest.Matches);
+        Assert.Equal(5, gtest.Matches);
         Assert.True(gtest.Enabled);
         var rule = Assert.Single(s.Config.EntryPoints, r => r.Name == "gtest 테스트");
         Assert.True(rule.Macro);
@@ -106,15 +124,16 @@ public class MacroEntryTests
                     Clangd = clangd,
                     CompileFrom = "flags",
                     Standard = "c++20",
-                    ExtraIncludeDirs = ["Src"],
+                    ExtraIncludeDirs = ["Src", "Ext"],
                     DetectMsvc = false,
                     IndexTimeoutSeconds = 120,
                 },
+                Exclude = ["Ext/**"],
             };
 
             var graph = await new CppTraceAnalyzer().AnalyzeAsync(config, new WorkPaths(data, "gtest"), null, CancellationToken.None);
 
-            Assert.Equal(["Adds", "Streams"], graph.EntryPoints.Select(e => e.Label).Order());
+            Assert.Equal(["Adds", "Externals", "OneLine", "Streams", "Templates"], graph.EntryPoints.Select(e => e.Label).Order());
             // 진입점 파일이 한 폴더뿐이라 묶음 이름은 클래스(테스트 묶음)만 남는다
             Assert.All(graph.EntryPoints, e => Assert.Equal("Calc", e.Group));
 
@@ -134,6 +153,17 @@ public class MacroEntryTests
             Assert.Contains("Calc::operator<<", streams);
             Assert.Contains("Twice", streams);
             Assert.DoesNotContain("Calc::Add", streams);
+
+            // 한 줄로 쓴 본문(TEST(S, N) { Foo(); })도 호출을 잡는다
+            Assert.Equal(["Twice"], CalleesOf("OneLine"));
+
+            // 중첩 템플릿 인자 호출(Count<Box<Box<int>>>(n))과 숫자 구분자(1'000) 뒤의 호출
+            Assert.Equal(["Count"], CalleesOf("Templates"));
+
+            // 범위 밖 같은 헤더의 동명 함수는 소속으로 갈린다
+            var externals = CalleesOf("Externals");
+            Assert.Contains("left::Send", externals);
+            Assert.Contains("right::Send", externals);
 
             // 노드는 테스트 이름과 본문을 가리킨다
             var addsNode = graph.Nodes[graph.EntryPoints.Single(e => e.Label == "Adds").NodeId];
