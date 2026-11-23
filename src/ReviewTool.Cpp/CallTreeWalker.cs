@@ -16,6 +16,12 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
     private readonly Dictionary<string, string> idBySymbol_ = [];
     // 심볼 ID 를 다른 정의와 나눠 가진 노드(여러 실행 파일의 main 등). 색인이 호출을 합쳐 주므로 제 본문 안 호출만 쓴다.
     private readonly HashSet<string> sharedSymbol_ = [];
+    // 매크로가 만든 진입점(gtest TEST 등). 색인에 이 함수의 호출이 일부만 남아(실측) outgoingCalls 대신 본문을 직접 훑는다.
+    private readonly HashSet<string> macroBodies_ = [];
+    // 정의 위치(uri|줄|이름) → 한정 이름. 테스트마다 같은 함수를 부르므로 색인 조회를 한 번만 한다. 못 찾은 것은 null.
+    private readonly Dictionary<string, string?> qualified_ = new(StringComparer.Ordinal);
+    // 정의 위치(파일|줄|열|호출 글자) → 그 함수의 item. 없으면 null(함수가 아닌 이름).
+    private readonly Dictionary<string, JsonObject?> callee_ = new(StringComparer.OrdinalIgnoreCase);
     // 펼친 노드와 그때의 깊이. 다른 진입점에서 더 얕게 닿으면 남은 깊이만큼 아래를 다시 따라간다
     // (진입점 처리 순서에 따라 결과가 달라지지 않게).
     private readonly Dictionary<string, int> expandedDepth_ = [];
@@ -32,6 +38,10 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
 
     public async Task<string?> ResolveEntryAsync(CppTraceAnalyzer.EntryCandidate candidate, CancellationToken ct)
     {
+        if (candidate.Rule.Macro)
+        {
+            return await AddMacroEntryAsync(candidate, ct);
+        }
         await session.OpenAsync(candidate.File, ct);
         try
         {
@@ -58,6 +68,29 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
         {
             await session.CloseAsync(candidate.File, ct);
         }
+    }
+
+    // 매크로가 만드는 함수(gtest 의 TEST(Suite, Name) 등)는 clangd 에 물어도 답이 없다(실측: 매크로 이름·인자 위치 모두 빈 답,
+    // 만들어진 TestBody 는 workspace/symbol 로도 0개). 그래서 노드를 소스에서 직접 만든다: 이름은 정규식이 잡은 Suite::Name,
+    // 본문은 매크로 줄 뒤 중괄호. 호출은 WalkAsync 가 BodyCallsAsync 로 본문을 훑어 찾는다.
+    private async Task<string?> AddMacroEntryAsync(CppTraceAnalyzer.EntryCandidate candidate, CancellationToken ct)
+    {
+        var position = new JsonObject { ["line"] = candidate.Line - 1, ["character"] = candidate.Column };
+        var item = new JsonObject
+        {
+            ["name"] = candidate.Method,
+            ["detail"] = candidate.ClassName is null ? candidate.Method : $"{candidate.ClassName}::{candidate.Method}",
+            ["kind"] = 12, // LSP SymbolKind.Function
+            ["uri"] = PathUri.ToUri(candidate.File),
+            ["range"] = new JsonObject { ["start"] = position.DeepClone(), ["end"] = position.DeepClone() },
+            ["selectionRange"] = new JsonObject { ["start"] = position.DeepClone(), ["end"] = position.DeepClone() },
+        };
+        var id = await AddNodeAsync(item, ct, macroDefined: true);
+        if (graph.Nodes[id].Stop == StopReason.NoDefinition)
+        {
+            Failures.Add($"매크로 진입점의 본문을 찾지 못함: {candidate.RelativeFile}:{candidate.Line} {candidate.Method}");
+        }
+        return id;
     }
 
     public async Task WalkAsync(string rootId, CancellationToken ct)
@@ -111,7 +144,8 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
                 {
                     await RelocateItemAsync(id, def, ct);
                 }
-                calls = await session.OutgoingCallsAsync(items_[id], ct);
+                calls = macroBodies_.Contains(id) ? await BodyCallsAsync(node, ct)
+                                                  : await session.OutgoingCallsAsync(items_[id], ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -240,6 +274,188 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
         return removed;
     }
 
+    // 매크로가 만든 함수의 호출 목록. 매크로 함수는 색인에 호출이 일부만 남고 이름으로도 찾을 수 없다(실측: gtest TEST 본문에서
+    // 33개 중 본문 안 호출 3개, workspace/symbol 로 TestBody 0개). 본문은 진짜 코드라 호출 이름 위치를 물으면 잘 풀리므로,
+    // 호출처럼 보이는 위치마다 clangd 에 그 자리의 함수를 물어 outgoingCalls 와 같은 모양({to, fromRanges})으로 만든다.
+    private async Task<JsonArray> BodyCallsAsync(TraceNode node, CancellationToken ct)
+    {
+        // 정의 위치(PathUri.ToPath)와 같은 모양으로 맞춘다. 구분자가 섞이면 같은 파일을 다른 파일로 보고 열린 문서를 닫아 버린다.
+        var path = Path.GetFullPath(Path.Combine(config.Root, node.File));
+        var lines = ReadLines(path);
+        var result = new JsonArray();
+        var byCallee = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        await session.OpenAsync(path, ct);
+        try
+        {
+            // 첫 줄은 매크로 줄(TEST(...))이라 건너뛴다
+            for (var line = node.StartLine + 1; line <= Math.Min(node.EndLine, lines.Length); line++)
+            {
+                var code = CodeOnly(lines[line - 1]);
+                foreach (Match m in CallSite.Matches(code))
+                {
+                    var at = m.Groups["at"];
+                    if (NotACall.Contains(at.Value) || MacroName.IsMatch(at.Value))
+                    {
+                        continue;
+                    }
+                    var item = await CalleeAtAsync(path, line - 1, at.Index, at.Value, ct);
+                    if (item is null)
+                    {
+                        continue;
+                    }
+                    await QualifyAsync(item, ct);
+                    var key = item["data"]?.GetValue<string>() ?? $"{item["uri"]}|{item["name"]}";
+                    if (!byCallee.TryGetValue(key, out var call))
+                    {
+                        // 응답 배열에 붙어 있는 노드라 복사해서 넣는다(JsonNode 는 부모를 하나만 가진다)
+                        call = new JsonObject { ["to"] = item.DeepClone(), ["fromRanges"] = new JsonArray() };
+                        byCallee[key] = call;
+                        result.Add(call);
+                    }
+                    call["fromRanges"]!.AsArray().Add(new JsonObject
+                    {
+                        ["start"] = new JsonObject { ["line"] = line - 1, ["character"] = at.Index },
+                        ["end"] = new JsonObject { ["line"] = line - 1, ["character"] = at.Index + at.Length },
+                    });
+                }
+            }
+        }
+        finally
+        {
+            await session.CloseAsync(path, ct);
+        }
+        return result;
+    }
+
+    // 본문의 한 위치가 부르는 함수의 item. 호출 위치에서 바로 prepare 하면 연산자(<<)는 빈 답이고, 멤버 함수는 헤더 선언을 줘서
+    // 소속을 가리기 어렵다(실측). 그래서 정의로 이동한 뒤 정의 위치에서 묻는다(색인 심볼 위치와 같아져 소속을 정확히 붙인다).
+    // 범위 밖(표준 라이브러리 등) 정의는 그 헤더를 열지 않고 위치만으로 item 을 만든다(큰 헤더를 열면 느리다).
+    private async Task<JsonObject?> CalleeAtAsync(string path, int line0, int col, string token, CancellationToken ct)
+    {
+        var def = await session.DefinitionAsync(path, line0, col, ct);
+        if (def is null)
+        {
+            return null;
+        }
+        // 테스트마다 같은 함수를 부른다. 정의 위치마다 한 번만 묻는다(정의 파일을 열 때마다 clangd 가 다시 해석해 느리다).
+        var cacheKey = $"{def.Value.Path}|{def.Value.Line0}|{def.Value.Col}|{token}";
+        if (callee_.TryGetValue(cacheKey, out var cached))
+        {
+            return cached?.DeepClone() as JsonObject;
+        }
+        var resolved = await ResolveCalleeAsync(path, def.Value, token, ct);
+        callee_[cacheKey] = resolved?.DeepClone() as JsonObject;
+        return resolved;
+    }
+
+    private async Task<JsonObject?> ResolveCalleeAsync(string path, (string Path, int Line0, int Col) def, string token,
+                                                       CancellationToken ct)
+    {
+        if (!IsInside(def.Path, out _))
+        {
+            var at = new JsonObject { ["line"] = def.Line0, ["character"] = def.Col };
+            var name = token is "<<" or ">>" ? $"operator{token}" : token;
+            return new JsonObject
+            {
+                ["name"] = name,
+                ["kind"] = 12,
+                ["uri"] = PathUri.ToUri(def.Path),
+                ["range"] = new JsonObject { ["start"] = at.DeepClone(), ["end"] = at.DeepClone() },
+                ["selectionRange"] = new JsonObject { ["start"] = at.DeepClone(), ["end"] = at.DeepClone() },
+            };
+        }
+        // 이미 열려 있는 본문 파일이면 닫지 않도록 바로 묻는다
+        return string.Equals(def.Path, path, StringComparison.OrdinalIgnoreCase)
+            ? await session.PrepareCallHierarchyAsync(path, def.Line0, def.Col, ct)
+            : await PrepareAtAsync(def.Path, def.Line0, def.Col, ct);
+    }
+
+    // prepare 결과에는 한정 이름(detail)이 없다. 같은 이름의 색인 심볼 중 위치가 같은 것의 소속(containerName)을 붙인다.
+    // 못 찾으면 그대로 둔다(이름만 보이고, 같은 심볼이 다른 경로로 먼저 들어왔으면 그 노드로 합쳐진다).
+    private async Task QualifyAsync(JsonObject item, CancellationToken ct)
+    {
+        if (item["detail"] is not null)
+        {
+            return;
+        }
+        var name = item["name"]!.GetValue<string>();
+        var uri = item["uri"]!.GetValue<string>();
+        var line = (item["selectionRange"] ?? item["range"])!["start"]!["line"]!.GetValue<int>();
+        var key = $"{uri}|{line}|{name}";
+        if (qualified_.TryGetValue(key, out var cached))
+        {
+            if (cached is not null)
+            {
+                item["detail"] = cached;
+            }
+            return;
+        }
+        qualified_[key] = null;
+        try
+        {
+            foreach (var s in (await session.WorkspaceSymbolAsync(name, ct)).OfType<JsonObject>())
+            {
+                if (s["name"]?.GetValue<string>() == name && s["location"]?["uri"]?.GetValue<string>() == uri &&
+                    s["location"]?["range"]?["start"]?["line"]?.GetValue<int>() == line &&
+                    s["containerName"]?.GetValue<string>() is { Length: > 0 } container)
+                {
+                    item["detail"] = qualified_[key] = $"{container}::{name}";
+                    return;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Failures.Add($"한정 이름 조회 실패 {name}: {ex.Message}");
+        }
+    }
+
+    // 호출처럼 보이는 곳: 이름(템플릿 인자 허용) 뒤 '(' , 또는 스트림 연산자 << >>.
+    private static readonly Regex CallSite = new(@"(?<at>\b[A-Za-z_]\w*)\s*(?:<[^<>()]*>)?\s*\(|(?<at><<|>>)", RegexOptions.Compiled);
+    // 대문자와 _ 만으로 된 이름은 매크로(EXPECT_EQ 등)로 보고 묻지 않는다. 인자 안의 호출은 따로 잡힌다.
+    private static readonly Regex MacroName = new(@"^[A-Z][A-Z0-9_]+$", RegexOptions.Compiled);
+    private static readonly HashSet<string> NotACall =
+        ["if", "for", "while", "switch", "return", "sizeof", "alignof", "decltype", "catch", "static_cast",
+         "reinterpret_cast", "const_cast", "dynamic_cast", "noexcept", "requires", "co_await", "co_return"];
+
+    // 문자열·문자 리터럴과 // 주석을 공백으로 바꾼다(열 위치는 그대로). 그 안의 "Foo(" 를 호출로 묻지 않게.
+    internal static string CodeOnly(string line)
+    {
+        var chars = line.ToCharArray();
+        var quote = '\0';
+        for (var i = 0; i < chars.Length; i++)
+        {
+            var c = chars[i];
+            if (quote != '\0')
+            {
+                if (c == '\\' && i + 1 < chars.Length)
+                {
+                    chars[i] = chars[i + 1] = ' ';
+                    i++;
+                    continue;
+                }
+                if (c == quote)
+                {
+                    quote = '\0';
+                }
+                else
+                {
+                    chars[i] = ' ';
+                }
+            }
+            else if (c is '"' or '\'')
+            {
+                quote = c;
+            }
+            else if (c == '/' && i + 1 < chars.Length && chars[i + 1] == '/')
+            {
+                Array.Fill(chars, ' ', i, chars.Length - i);
+                break;
+            }
+        }
+        return new string(chars);
+    }
+
     private static bool InBody(JsonObject call, TraceNode node) =>
         call["fromRanges"]?.AsArray().OfType<JsonObject>().Any(r =>
             r["start"]?["line"]?.GetValue<int>() + 1 is { } l && l >= node.StartLine && l <= node.EndLine) == true;
@@ -261,7 +477,9 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
         return edge;
     }
 
-    private async Task<string> AddNodeAsync(JsonObject item, CancellationToken ct)
+    // macroDefined: 매크로가 만든 진입점. 심볼 ID 를 같은 매크로의 다른 함수와 나눠 가지므로 위치(파일:줄)로 노드를 가르고
+    // 제 본문 안 호출만 쓴다(sharedSymbol_). 심볼 → 노드 표에는 넣지 않는다(다른 함수가 이 노드로 합쳐지지 않게).
+    private async Task<string> AddNodeAsync(JsonObject item, CancellationToken ct, bool macroDefined = false)
     {
         var name = item["name"]!.GetValue<string>();
         var qualified = item["detail"]?.GetValue<string>() is { Length: > 0 } d ? d : name;
@@ -272,8 +490,8 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
         var col = sel["character"]!.GetValue<int>();
         var inside = IsInside(path, out var rel);
 
-        var split = false;
-        if (symbol is not null && idBySymbol_.TryGetValue(symbol, out var known))
+        var split = macroDefined;
+        if (!macroDefined && symbol is not null && idBySymbol_.TryGetValue(symbol, out var known))
         {
             // 프로세스마다 있는 main 처럼 다른 파일에 정의가 또 있으면 심볼 ID 가 같아도 다른 함수다.
             var first = graph.Nodes[known];
@@ -288,12 +506,17 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
 
         // 범위 밖 함수는 템플릿 인스턴스마다 심볼이 달라 같은 이름이 줄줄이 생긴다. 이름 하나로 합친다.
         var id = !inside ? $"ext:{qualified}"
+               : macroDefined ? $"{qualified}@{rel}:{line0 + 1}"
                : split ? $"{qualified}@{symbol}@{rel}"
                : symbol is not null ? $"{qualified}@{symbol}"
                : $"{qualified}@{rel}:{line0 + 1}";
         if (split)
         {
             sharedSymbol_.Add(id);
+        }
+        if (macroDefined)
+        {
+            macroBodies_.Add(id);
         }
         if (graph.Nodes.ContainsKey(id))
         {
@@ -317,9 +540,9 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
         else
         {
             var body = FunctionBody.Find(ReadLines(path), line0, col);
-            if (!body.HasBody)
+            if (!body.HasBody && !macroDefined)
             {
-                // 선언 위치였다 → 색인에서 정의를 찾는다
+                // 선언 위치였다 → 색인에서 정의를 찾는다(매크로 진입점은 색인에 없으므로 찾지 않는다)
                 var def = await FindDefinitionAsync(name, qualified, (path, line0, col), ct);
                 if (def is not null && IsInside(def.Value.Path, out var defRel))
                 {

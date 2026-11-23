@@ -247,6 +247,17 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .entries { padding: 8px; background: var(--panel); }
 .entries .search { width: 100%; margin-bottom: 8px; }
 .entries .group { color: var(--muted); font-size: 12px; margin: 10px 4px 4px; }
+/* 2단 트리: 폴더(접기/펼치기) ▸ 클래스 ▸ 진입점 */
+.entries .group.folder {
+    display: flex; align-items: center; gap: 4px; width: calc(100% - 8px);
+    border: none; background: none; padding: 2px 0; cursor: pointer;
+    font-weight: 600; color: var(--text); text-align: left;
+}
+.entries .group.folder:hover { color: var(--accent); }
+.entries .group.folder .caret { width: 12px; color: var(--muted); }
+.entries .group.folder .count { margin-left: auto; color: var(--muted); font-weight: 400; }
+.entries .group.cls { margin: 6px 4px 2px 18px; }
+.entries .entry.nested { padding-left: 26px; }
 
 .entries .entry {
     display: block;

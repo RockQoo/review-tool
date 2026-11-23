@@ -22,6 +22,9 @@ public static partial class CppTargetDetector
         // 시작 흐름(main → Init) 용. 다른 규칙과 상관없이 찾으면 켠다.
         new("시작 함수", @"^(?:int|auto)[ \t]+(?<method>w?main)[ \t]*\(", ["**/*.cpp"],
             "int main(...) — 설정 로딩·스레드·핸들러 등록·리스너 순서를 흐름 요약으로 본다"),
+        // 단위 테스트도 흐름을 보는 진입점이다(테스트 → 라이브러리 함수). 묶음 = 테스트 묶음(Suite).
+        new("gtest 테스트", @"^TEST(?:_F|_P)?\(\s*(?<class>\w+)\s*,\s*(?<method>\w+)\s*\)", ["**/*.cpp"],
+            "TEST(Suite, Name) / TEST_F / TEST_P — 테스트가 부르는 라이브러리 함수 흐름", Macro: true),
     ];
 
     private static readonly string[] ThirdPartyNames =
@@ -40,13 +43,13 @@ public static partial class CppTargetDetector
             Name = SanitizeName(name ?? Path.GetFileName(root)),
             Root = root,
             Language = "cpp",
-            HideCallees = [@"^Log::", @"^spdlog::", @"^fmt::"],
+            HideCallees = [@"^Log::", @"^spdlog::", @"^fmt::", @"^testing::"],
         };
 
         // 1) 컴파일 옵션: vcxproj > compile_flags.txt > 추측
         var projects = SourceFiles.Enumerate(root, CompileDatabase.IsVcxproj)
             .Select(p => Path.GetRelativePath(root, p).Replace('\\', '/'))
-            .Where(p => !IsThirdParty(p))
+            .Where(p => !IsThirdParty(p) && !IsBuildOutput(p))
             .ToList();
         if (projects.Count > 0)
         {
@@ -75,11 +78,13 @@ public static partial class CppTargetDetector
             }
         }
 
-        // 2) 서드파티 폴더는 범위에서 뺀다(범위 밖 함수는 "외부"로 보이고 들어가지 않는다)
+        // 2) 서드파티·빌드 결과 폴더는 범위에서 뺀다(범위 밖 함수는 "외부"로 보이고 들어가지 않는다).
+        //    빌드 폴더에는 CMake 가 만든 .cpp(컴파일러 확인용)가 있어 빼지 않으면 진입점·소스로 섞인다.
         foreach (var dir in SourceFiles.Directories(root, maxDepth: 3))
         {
             var rel = Path.GetRelativePath(root, dir).Replace('\\', '/');
-            if (ThirdPartyNames.Contains(Path.GetFileName(dir).ToLowerInvariant()) &&
+            var leafName = Path.GetFileName(dir).ToLowerInvariant();
+            if ((ThirdPartyNames.Contains(leafName) || BuildOutputNames.Contains(leafName)) &&
                 !config.Exclude.Any(e => rel.StartsWith(e.TrimEnd('*', '/'), StringComparison.OrdinalIgnoreCase)))
             {
                 config.Exclude.Add(rel + "/**");
@@ -126,6 +131,12 @@ public static partial class CppTargetDetector
 
     private static bool IsThirdParty(string relativePath) =>
         relativePath.Split('/').Any(p => ThirdPartyNames.Contains(p.ToLowerInvariant()));
+
+    // CMake 가 만든 VS 솔루션(build/vs/*.vcxproj)은 원본 프로젝트가 아니다. 이걸 잡으면 분석 범위가 build/** 가 된다.
+    private static readonly string[] BuildOutputNames = ["build", "out", "bin", "obj", "cmake-build-debug", "cmake-build-release"];
+
+    private static bool IsBuildOutput(string relativePath) =>
+        relativePath.Split('/').SkipLast(1).Any(p => BuildOutputNames.Contains(p.ToLowerInvariant()));
 
     private static void ReadCompileFlags(string path, TargetConfig config)
     {

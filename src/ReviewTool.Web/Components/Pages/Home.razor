@@ -247,20 +247,36 @@
         <main class="panes mode-@LayoutMode">
             <nav class="pane entries">
                 <input class="search" placeholder="진입점 찾기 (패킷, 함수)" @bind="entryFilter" @bind:event="oninput" />
-                @foreach (var group in FilteredEntries().GroupBy(e => e.Group))
+                @* 2단 트리: 폴더(프로젝트) ▸ 클래스 ▸ 진입점. 묶음 이름 "폴더 / 클래스"를 화면에서만 나눈다. *@
+                @foreach (var folder in FilteredEntries().GroupBy(e => EntryFolder(e.Group)))
                 {
-                    <div class="group">@group.Key</div>
-                    @foreach (var e in group)
+                    var folderKey = folder.Key;
+                    var open = IsFolderOpen(folderKey);
+                    <button class="group folder" aria-expanded="@(open ? "true" : "false")" @onclick="() => ToggleFolder(folderKey)"
+                            title="@(open ? "접기" : "펼치기")">
+                        <span class="caret">@(open ? "▾" : "▸")</span>@folderKey<span class="count">@folder.Count()</span>
+                    </button>
+                    @if (open)
                     {
-                        <button class="entry @(selectedEntry == e ? "active" : "")" @onclick="() => SelectEntry(e)"
-                                title="@graph.Nodes[e.NodeId].Name">
-                            <span class="label">@e.Label</span>
-                            @if (reviewLog is { Items.Count: > 0 } && ProgressOf(e.NodeId) is { Checked: > 0 } p)
+                        @foreach (var cls in folder.GroupBy(e => EntryClass(e.Group)))
+                        {
+                            @if (cls.Key.Length > 0)
                             {
-                                <span class="progress" title="이 진입점에서 닿는 함수 @(p.Total)개 중 확인 @(p.Checked)개">@p.Checked/@p.Total</span>
+                                <div class="group cls">@cls.Key</div>
                             }
-                            <span class="sub">@ShortName(graph.Nodes[e.NodeId].Name)</span>
-                        </button>
+                            @foreach (var e in cls)
+                            {
+                                <button class="entry nested @(selectedEntry == e ? "active" : "")" @onclick="() => SelectEntry(e)"
+                                        title="@graph.Nodes[e.NodeId].Name">
+                                    <span class="label">@e.Label</span>
+                                    @if (reviewLog is { Items.Count: > 0 } && ProgressOf(e.NodeId) is { Checked: > 0 } p)
+                                    {
+                                        <span class="progress" title="이 진입점에서 닿는 함수 @(p.Total)개 중 확인 @(p.Checked)개">@p.Checked/@p.Total</span>
+                                    }
+                                    <span class="sub">@ShortName(graph.Nodes[e.NodeId].Name)</span>
+                                </button>
+                            }
+                        }
                     }
                 }
                 @if (entryFilter.Trim().Length >= 2)
@@ -1710,6 +1726,25 @@
         if (target is not null)
         {
             Workspace.StartAnalysis(target);
+        }
+    }
+
+    // ---- 진입점 트리 (폴더 ▸ 클래스 ▸ 진입점) ----
+
+    // 접은 폴더. 기본은 모두 펼침. 검색 중에는 찾은 것이 숨지 않게 모두 펼쳐 보인다.
+    private readonly HashSet<string> collapsedFolders = new(StringComparer.Ordinal);
+
+    private static string EntryFolder(string group) => EntryGroup.Folder(group);
+
+    private static string EntryClass(string group) => EntryGroup.Class(group);
+
+    private bool IsFolderOpen(string folder) => entryFilter.Trim().Length > 0 || !collapsedFolders.Contains(folder);
+
+    private void ToggleFolder(string folder)
+    {
+        if (!collapsedFolders.Remove(folder))
+        {
+            collapsedFolders.Add(folder);
         }
     }
 

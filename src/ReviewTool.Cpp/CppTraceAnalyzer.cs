@@ -203,7 +203,8 @@ public sealed class CppTraceAnalyzer : ITraceAnalyzer
                         continue;
                     }
                     lineStarts ??= LineStarts(text);
-                    var (line, col) = ToLineColumn(lineStarts, method.Index);
+                    // 매크로 규칙은 매크로 이름(일치 시작) 위치를 노드 위치로 쓴다. 본문은 그 뒤 중괄호에서 찾는다.
+                    var (line, col) = ToLineColumn(lineStarts, rule.Macro ? m.Index : method.Index);
                     perRule[r].Add(new EntryCandidate(rule, file, rel, line, col, method.Value,
                         m.Groups["class"].Success ? m.Groups["class"].Value : null,
                         m.Groups["label"].Success ? m.Groups["label"].Value

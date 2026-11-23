@@ -209,6 +209,32 @@ public sealed class ClangdSession : IAsyncDisposable
         return (result as JsonArray)?.FirstOrDefault() as JsonObject;
     }
 
+    // 그 위치의 이름(함수 호출, 연산자 포함)이 가리키는 정의 위치. 여러 개면 첫 번째. 연산자(<<)처럼 prepareCallHierarchy 가
+    // 답하지 않는 자리도 정의로는 갈 수 있다(실측).
+    public async Task<(string Path, int Line0, int Col)?> DefinitionAsync(string path, int line0, int character,
+                                                                          CancellationToken cancellationToken)
+    {
+        var result = await client_.RequestAsync("textDocument/definition", new JsonObject
+        {
+            ["textDocument"] = new JsonObject { ["uri"] = PathUri.ToUri(path) },
+            ["position"] = new JsonObject { ["line"] = line0, ["character"] = character },
+        }, cancellationToken, TimeSpan.FromSeconds(30));
+        var first = result switch
+        {
+            JsonArray array => array.FirstOrDefault() as JsonObject,
+            JsonObject single => single,
+            _ => null,
+        };
+        // Location(uri, range) 또는 LocationLink(targetUri, targetSelectionRange)
+        var uri = (first?["uri"] ?? first?["targetUri"])?.GetValue<string>();
+        var start = (first?["range"] ?? first?["targetSelectionRange"])?["start"];
+        if (uri is null || start is null)
+        {
+            return null;
+        }
+        return (PathUri.ToPath(uri), start["line"]!.GetValue<int>(), start["character"]!.GetValue<int>());
+    }
+
     public async Task<JsonArray> OutgoingCallsAsync(JsonObject item, CancellationToken cancellationToken)
     {
         var result = await client_.RequestAsync("callHierarchy/outgoingCalls", new JsonObject

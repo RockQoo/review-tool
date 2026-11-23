@@ -111,6 +111,9 @@ public sealed class EntryPointRule
     public string Pattern { get; set; } = "";
     // 파일 glob. 비우면 Include 전체.
     public List<string> Files { get; set; } = [];
+    // 매크로가 만드는 함수(gtest 의 TEST(Suite, Name) 등). clangd 에는 매크로 이름 위치로 묻고(그래야 본문이 잡힌다),
+    // 같은 매크로로 만든 함수끼리 심볼 ID 를 나눠 가지므로 위치마다 다른 노드로 두고 제 본문 안 호출만 쓴다.
+    public bool Macro { get; set; }
 }
 
 // 메시지 통로 하나. 정규식은 모두 소스 텍스트에 돈다.
