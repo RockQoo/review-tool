@@ -1805,7 +1805,7 @@
             return;
         }
         kindsOf_ = graph;
-        kindByEntry_ = graph!.EntryPoints.ToDictionary(e => e, EntryKind.Of, ReferenceEqualityComparer.Instance);
+        kindByEntry_ = graph!.EntryPoints.ToDictionary(e => e, EntryKind.Of); // EntryPoint 는 클래스라 기본이 참조 비교
         var counts = kindByEntry_.Values.GroupBy(k => k).ToDictionary(g => g.Key, g => g.Count());
         kindCounts_ = EntryKind.All.Where(counts.ContainsKey).Select(k => (k, counts[k])).ToList();
     }
