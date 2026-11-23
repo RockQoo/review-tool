@@ -287,14 +287,8 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
         await session.OpenAsync(path, ct);
         try
         {
-            for (var line = node.StartLine; line <= Math.Min(node.EndLine, lines.Length); line++)
+            foreach (var (line, code) in BodyLines(lines, node.StartLine, node.EndLine))
             {
-                var code = CodeOnly(lines[line - 1]);
-                if (line == node.StartLine)
-                {
-                    // 첫 줄은 매크로 부분(TEST(...))만 지우고 그 뒤는 본다: TEST(S, N) { Foo(); } 처럼 한 줄 본문도 있다
-                    code = BlankMacroHead(code);
-                }
                 foreach (Match m in CallSite.Matches(code))
                 {
                     var at = m.Groups["at"];
@@ -422,6 +416,46 @@ internal sealed class CallTreeWalker(TargetConfig config, TraceGraph graph, Clan
     // 템플릿 인자는 균형 그룹으로 < > 짝을 맞춘다. 그래서 Foo<A<B>>( 의 닫는 >> 는 이름 쪽에 먹혀 연산자로 잡히지 않는다.
     private static readonly Regex CallSite = new(
         @"(?<at>\b[A-Za-z_]\w*)\s*(?:<(?>[^<>()]+|<(?<d>)|>(?<-d>))*(?(d)(?!))>)?\s*\(|(?<at><<|>>)", RegexOptions.Compiled);
+
+    // 본문 중괄호 { } 안쪽만 남긴 줄(1부터 세는 줄, 열 위치 그대로). 첫 줄은 매크로 부분을 지우고, 첫 '{' 앞과
+    // 짝이 맞는 '}' 뒤(같은 줄에 이어지는 다른 함수 등)도 지운다. 문자열·주석 속 중괄호는 CodeOnly 가 먼저 지운다.
+    internal static IEnumerable<(int Line, string Code)> BodyLines(string[] lines, int startLine, int endLine)
+    {
+        var depth = 0;
+        var started = false;
+        for (var line = startLine; line <= Math.Min(endLine, lines.Length); line++)
+        {
+            var text = CodeOnly(lines[line - 1]);
+            var code = (line == startLine ? BlankMacroHead(text) : text).ToCharArray();
+            for (var i = 0; i < code.Length; i++)
+            {
+                if (!started)
+                {
+                    if (code[i] == '{')
+                    {
+                        started = true;
+                        depth = 1;
+                    }
+                    else
+                    {
+                        code[i] = ' ';
+                    }
+                    continue;
+                }
+                if (code[i] == '{')
+                {
+                    depth++;
+                }
+                else if (code[i] == '}' && --depth == 0)
+                {
+                    Array.Fill(code, ' ', i + 1, code.Length - i - 1);
+                    yield return (line, new string(code));
+                    yield break;
+                }
+            }
+            yield return (line, new string(code));
+        }
+    }
 
     // 첫 줄의 매크로 부분: 첫 '(' 부터 짝이 맞는 ')' 까지와 그 앞을 지운다. 짝을 못 찾으면 줄 전체를 지운다.
     internal static string BlankMacroHead(string code)

@@ -38,3 +38,5 @@ TEST(Calc, Externals)
     left::Send();
     right::Send();
 }
+
+TEST(Calc, Sibling) { Twice(2); } int Helper() { const Calc c; return c.Add(1, 1); }

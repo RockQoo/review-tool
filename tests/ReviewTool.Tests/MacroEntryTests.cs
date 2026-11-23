@@ -49,12 +49,25 @@ public class MacroEntryTests
     }
 
     [Fact]
+    public void 본문_중괄호_밖은_지운다()
+    {
+        string[] lines = ["TEST(S, A) { Foo(); } void Helper() { Bar(); }", "int x = Baz();"];
+        var body = CallTreeWalker.BodyLines(lines, 1, 2).ToList();
+
+        var (line, code) = Assert.Single(body); // 본문이 첫 줄에서 끝나 둘째 줄은 보지 않는다
+        Assert.Equal(1, line);
+        Assert.Contains("Foo(", code);
+        Assert.DoesNotContain("Helper", code);
+        Assert.DoesNotContain("Bar", code);
+    }
+
+    [Fact]
     public void 자동_감지가_gtest_규칙을_매크로로_켠다()
     {
         var s = CppTargetDetector.Suggest(Fixture);
 
         var gtest = s.Presets.Single(p => p.Preset.Name == "gtest 테스트");
-        Assert.Equal(5, gtest.Matches);
+        Assert.Equal(6, gtest.Matches);
         Assert.True(gtest.Enabled);
         var rule = Assert.Single(s.Config.EntryPoints, r => r.Name == "gtest 테스트");
         Assert.True(rule.Macro);
@@ -133,7 +146,7 @@ public class MacroEntryTests
 
             var graph = await new CppTraceAnalyzer().AnalyzeAsync(config, new WorkPaths(data, "gtest"), null, CancellationToken.None);
 
-            Assert.Equal(["Adds", "Externals", "OneLine", "Streams", "Templates"], graph.EntryPoints.Select(e => e.Label).Order());
+            Assert.Equal(["Adds", "Externals", "OneLine", "Sibling", "Streams", "Templates"], graph.EntryPoints.Select(e => e.Label).Order());
             // 진입점 파일이 한 폴더뿐이라 묶음 이름은 클래스(테스트 묶음)만 남는다
             Assert.All(graph.EntryPoints, e => Assert.Equal("Calc", e.Group));
 
@@ -156,6 +169,8 @@ public class MacroEntryTests
 
             // 한 줄로 쓴 본문(TEST(S, N) { Foo(); })도 호출을 잡는다
             Assert.Equal(["Twice"], CalleesOf("OneLine"));
+            // 같은 줄에 이어지는 다른 함수(Helper)의 호출은 이 테스트 것이 아니다
+            Assert.Equal(["Twice"], CalleesOf("Sibling"));
 
             // 중첩 템플릿 인자 호출(Count<Box<Box<int>>>(n))과 숫자 구분자(1'000) 뒤의 호출
             Assert.Equal(["Count"], CalleesOf("Templates"));
